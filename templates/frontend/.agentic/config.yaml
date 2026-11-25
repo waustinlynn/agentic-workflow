@@ -1,0 +1,42 @@
+# Frontend repository configuration (React / Vite / Next.js / TypeScript)
+# Copy to <your-repo>/.agentic/config.yaml
+#
+# Recommended GitHub repo settings:
+#   - Enable "Allow auto-merge" in Settings -> General -> Pull Requests
+#   - Protect `main`: require 1 approving review (agentic-reviewer[bot]) + passing `CI` check
+
+version: 1
+stack: frontend
+
+git:
+  default_branch: main
+  branch_prefix: agent/
+  commit_style: conventional
+
+execution:
+  target: local        # Switch to 'lambda' once Phase 2 worker-node image is deployed
+  runtime: node
+  max_review_rounds: 3
+  timeout_minutes: 10
+  working_directory: .
+  setup_commands:
+    - npm ci
+  verify_commands:
+    - npm run lint
+    - npm run typecheck
+    - npm test -- --run
+
+review:
+  wait_for_ci: true
+  auto_merge: true
+  merge_method: squash
+  extra_checklist:
+    - "Verify new UI elements have accessible labels and keyboard support"
+    - "Ensure no secrets or client-exposed env vars leak sensitive credentials"
+
+safety:
+  protected_paths:
+    - .github/workflows/**
+    - .agentic/**
+    - CODEOWNERS
+  allow_external_forks: false

@@ -1,0 +1,46 @@
+# Mobile repository configuration (React Native / Expo / Flutter / Native)
+# Copy to <your-repo>/.agentic/config.yaml
+#
+# Mobile SDK builds run on local runner (Phase 1) or use runtime: ci-verified with GitHub Actions.
+# Recommended GitHub repo settings:
+#   - Enable "Allow auto-merge" in Settings -> General -> Pull Requests (if auto_merge: true)
+#   - Protect `main`: require 1 approving review (agentic-reviewer[bot]) + passing `CI` check
+
+version: 1
+stack: mobile
+
+git:
+  default_branch: main
+  branch_prefix: agent/
+  commit_style: conventional
+
+execution:
+  target: local
+  runtime: ci-verified
+  max_review_rounds: 3
+  timeout_minutes: 15
+  working_directory: .
+  setup_commands:
+    - npm ci
+  verify_commands:
+    - npm run lint
+    - npm run typecheck
+    - npm test -- --watchAll=false
+
+review:
+  wait_for_ci: true
+  auto_merge: false    # Default to human merge sign-off for mobile releases
+  merge_method: squash
+  extra_checklist:
+    - "Verify platform-specific permissions (iOS Info.plist / AndroidManifest) are not widened unnecessarily"
+    - "Check offline/error states and avoid blocking main UI thread"
+
+safety:
+  protected_paths:
+    - .github/workflows/**
+    - .agentic/**
+    - CODEOWNERS
+    - fastlane/**
+    - ios/**/Info.plist
+    - android/**/AndroidManifest.xml
+  allow_external_forks: false

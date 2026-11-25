@@ -1,0 +1,43 @@
+# Infrastructure repository configuration (Terraform / OpenTofu / CDK)
+# Copy to <your-repo>/.agentic/config.yaml
+#
+# Recommended GitHub repo settings:
+#   - Protect `main`: require 1 approving review + passing Terraform fmt/validate/plan CI
+#   - Keep auto_merge: false so a human always signs off on infrastructure plans before apply
+
+version: 1
+stack: infra
+
+git:
+  default_branch: main
+  branch_prefix: agent/
+  commit_style: conventional
+
+execution:
+  target: local        # Switch to 'lambda' with runtime: infra in Phase 2
+  runtime: infra
+  max_review_rounds: 3
+  timeout_minutes: 10
+  working_directory: .
+  setup_commands: []
+  verify_commands:
+    - terraform fmt -check -recursive
+    - terraform validate
+
+review:
+  wait_for_ci: true
+  auto_merge: false    # Require explicit human approval & plan review before merging infra changes
+  merge_method: squash
+  extra_checklist:
+    - "Verify least-privilege IAM policies (no wildcard '*' resources or admin actions)"
+    - "Confirm no secrets, credentials, or hardcoded account IDs appear in Terraform files"
+    - "Check for destructive resource replacements or unexpected ongoing cloud costs"
+
+safety:
+  protected_paths:
+    - .github/workflows/**
+    - .agentic/**
+    - CODEOWNERS
+    - "**/backend.tf"
+    - "**/prod/**"
+  allow_external_forks: false

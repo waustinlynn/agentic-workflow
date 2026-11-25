@@ -1,0 +1,44 @@
+# Starter CI workflow for repositories onboarded to agentic-workflow
+# Copy to <your-repo>/.github/workflows/ci.yml and customize the install/verify steps.
+# Mark the `verify` job as a Required Status Check in Branch Protection on `main`.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Replace with your stack's toolchain setup & verify commands:
+      # --- Python (uv) example ---
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen --dev
+
+      - name: Lint, typecheck, and test
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+          uv run pytest
+
+      # --- Node.js example ---
+      # - uses: actions/setup-node@v4
+      #   with:
+      #     node-version: "22"
+      #     cache: npm
+      # - run: npm ci
+      # - run: npm run lint && npm run typecheck && npm test

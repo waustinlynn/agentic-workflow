@@ -1,0 +1,30 @@
+# Starter Deploy workflow triggered automatically after agent PR approval + auto-merge to `main`
+# Copy to <your-repo>/.github/workflows/deploy.yml and configure your target environment/secrets.
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Deploy to target environment
+        run: |
+          echo "Deploying commit ${GITHUB_SHA} from ${GITHUB_REPOSITORY} to production..."
+          # Replace with your deploy command (e.g., aws s3 sync, vercel deploy, flyctl deploy, terraform apply)
