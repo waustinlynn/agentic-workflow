@@ -1,8 +1,5 @@
-data "archive_file" "ingest_lambda" {
-  type        = "zip"
-  source_dir  = "${path.module}/../src/ingest"
-  output_path = "${path.module}/.build/ingest_lambda.zip"
-  excludes    = ["__pycache__", "*.pyc"]
+locals {
+  ingest_zip_path = "${path.module}/.build/ingest_lambda.zip"
 }
 
 resource "aws_cloudwatch_log_group" "ingest" {
@@ -39,10 +36,13 @@ data "aws_iam_policy_document" "ingest_lambda" {
   }
 
   statement {
-    sid       = "ReadWebhookSecret"
-    effect    = "Allow"
-    actions   = ["secretsmanager:GetSecretValue"]
-    resources = [aws_secretsmanager_secret.github_webhook.arn]
+    sid     = "ReadWebhookAndCoderSecrets"
+    effect  = "Allow"
+    actions = ["secretsmanager:GetSecretValue"]
+    resources = [
+      aws_secretsmanager_secret.github_webhook.arn,
+      aws_secretsmanager_secret.github_coder_app.arn,
+    ]
   }
 
   statement {
@@ -72,18 +72,19 @@ resource "aws_lambda_function" "ingest" {
   role             = aws_iam_role.ingest_lambda.arn
   runtime          = "python3.12"
   architectures    = ["arm64"]
-  handler          = "handler.lambda_handler"
-  filename         = data.archive_file.ingest_lambda.output_path
-  source_code_hash = data.archive_file.ingest_lambda.output_base64sha256
+  handler          = "ingest.handler.lambda_handler"
+  filename         = local.ingest_zip_path
+  source_code_hash = fileexists(local.ingest_zip_path) ? filebase64sha256(local.ingest_zip_path) : null
   timeout          = 15
   memory_size      = 256
 
   environment {
     variables = {
-      SQS_QUEUE_URL       = aws_sqs_queue.tasks.url
-      REPO_REGISTRY_TABLE = aws_dynamodb_table.repo_registry.name
-      WEBHOOK_SECRET_ARN  = aws_secretsmanager_secret.github_webhook.arn
-      ALLOWED_ACTORS      = join(",", var.allowed_actors)
+      SQS_QUEUE_URL        = aws_sqs_queue.tasks.url
+      REPO_REGISTRY_TABLE  = aws_dynamodb_table.repo_registry.name
+      WEBHOOK_SECRET_ARN   = aws_secretsmanager_secret.github_webhook.arn
+      CODER_APP_SECRET_ARN = aws_secretsmanager_secret.github_coder_app.arn
+      ALLOWED_ACTORS       = join(",", var.allowed_actors)
     }
   }
 

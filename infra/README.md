@@ -16,9 +16,10 @@ AWS_REGION=us-east-1 ./infra/scripts/bootstrap-state.sh
 
 This creates an encrypted, versioned, public-access-blocked, TLS-only S3 bucket (`agentic-workflow-tfstate-<ACCOUNT_ID>-us-east-1`) and generates a gitignored `infra/backend.hcl`.
 
-## 2. Initialize, Plan, and Apply
+## 2. Build Lambda Package, Initialize, Plan, and Apply
 
 ```bash
+./infra/scripts/build-ingest-lambda.sh
 cd infra
 terraform init -backend-config=backend.hcl
 terraform fmt -check -recursive
