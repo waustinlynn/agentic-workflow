@@ -1,0 +1,89 @@
+{
+  "$defs": {
+    "ReviewComment": {
+      "additionalProperties": false,
+      "description": "Inline file/line review comment emitted by the Review Agent.",
+      "properties": {
+        "path": {
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "line": {
+          "exclusiveMinimum": 0,
+          "title": "Line",
+          "type": "integer"
+        },
+        "side": {
+          "default": "RIGHT",
+          "enum": [
+            "LEFT",
+            "RIGHT"
+          ],
+          "title": "Side",
+          "type": "string"
+        },
+        "severity": {
+          "$ref": "#/$defs/ReviewCommentSeverity",
+          "default": "warning"
+        },
+        "body": {
+          "minLength": 1,
+          "title": "Body",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "line",
+        "body"
+      ],
+      "title": "ReviewComment",
+      "type": "object"
+    },
+    "ReviewCommentSeverity": {
+      "description": "Severity tag on an inline review comment.",
+      "enum": [
+        "blocker",
+        "warning",
+        "nit"
+      ],
+      "title": "ReviewCommentSeverity",
+      "type": "string"
+    },
+    "ReviewVerdict": {
+      "description": "Formal GitHub pull request review decision.",
+      "enum": [
+        "APPROVE",
+        "REQUEST_CHANGES"
+      ],
+      "title": "ReviewVerdict",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Structured JSON output produced by the Option A Review Agent.",
+  "properties": {
+    "verdict": {
+      "$ref": "#/$defs/ReviewVerdict"
+    },
+    "summary": {
+      "minLength": 1,
+      "title": "Summary",
+      "type": "string"
+    },
+    "comments": {
+      "items": {
+        "$ref": "#/$defs/ReviewComment"
+      },
+      "title": "Comments",
+      "type": "array"
+    }
+  },
+  "required": [
+    "verdict",
+    "summary"
+  ],
+  "title": "ReviewResult",
+  "type": "object"
+}

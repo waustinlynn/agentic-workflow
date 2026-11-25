@@ -438,3 +438,76 @@ class CIStatusSummary(BaseModel):
     total_checks: int = Field(ge=0)
     failed_checks: list[str] = Field(default_factory=list)
     pending_checks: list[str] = Field(default_factory=list)
+
+
+class VerifyCommandResult(BaseModel):
+    """Outcome of executing a single verification command from ``.agentic/config.yaml``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    command: str = Field(min_length=1)
+    passed: bool
+    summary: str = ""
+
+
+class PlanSubIssue(BaseModel):
+    """Atomic, Lambda-sized implementation step proposed by the planning agent."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1)
+    description: str = Field(min_length=1)
+    acceptance_criteria: list[str] = Field(min_length=1)
+    files_to_touch: list[str] = Field(default_factory=list)
+    test_cases: list[str] = Field(default_factory=list)
+    estimated_minutes: int = Field(default=5, ge=1, le=12)
+
+
+class PlanResult(BaseModel):
+    """Structured JSON output produced by the ``plan`` prompt."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    summary: str = Field(min_length=1)
+    sub_issues: list[PlanSubIssue] = Field(min_length=1)
+    open_questions: list[str] = Field(default_factory=list)
+
+
+class CodeTaskResult(BaseModel):
+    """Structured JSON output produced by the ``code_and_test`` prompt."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    summary: str = Field(min_length=1)
+    files_changed: list[str] = Field(default_factory=list)
+    tests_added_or_updated: list[str] = Field(default_factory=list)
+    verify_results: list[VerifyCommandResult] = Field(default_factory=list)
+    commit_message: str = Field(min_length=1)
+    pr_title: str = Field(min_length=1)
+    pr_body: str = Field(min_length=1)
+    blocked_reason: str | None = None
+
+
+class AddressReviewResult(BaseModel):
+    """Structured JSON output produced by the ``address_review`` prompt."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    summary: str = Field(min_length=1)
+    addressed_comments: list[str] = Field(default_factory=list)
+    verify_results: list[VerifyCommandResult] = Field(default_factory=list)
+    commit_message: str = Field(min_length=1)
+    blocked_reason: str | None = None
+
+
+class FixCIResult(BaseModel):
+    """Structured JSON output produced by the ``fix_ci`` prompt."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    root_cause: str = Field(min_length=1)
+    summary: str = Field(min_length=1)
+    files_changed: list[str] = Field(default_factory=list)
+    verify_results: list[VerifyCommandResult] = Field(default_factory=list)
+    commit_message: str = Field(min_length=1)
+    blocked_reason: str | None = None

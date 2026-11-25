@@ -1,0 +1,86 @@
+{
+  "$defs": {
+    "PlanSubIssue": {
+      "additionalProperties": false,
+      "description": "Atomic, Lambda-sized implementation step proposed by the planning agent.",
+      "properties": {
+        "title": {
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "description": {
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "acceptance_criteria": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Acceptance Criteria",
+          "type": "array"
+        },
+        "files_to_touch": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Files To Touch",
+          "type": "array"
+        },
+        "test_cases": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Test Cases",
+          "type": "array"
+        },
+        "estimated_minutes": {
+          "default": 5,
+          "maximum": 12,
+          "minimum": 1,
+          "title": "Estimated Minutes",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "title",
+        "description",
+        "acceptance_criteria"
+      ],
+      "title": "PlanSubIssue",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Structured JSON output produced by the ``plan`` prompt.",
+  "properties": {
+    "summary": {
+      "minLength": 1,
+      "title": "Summary",
+      "type": "string"
+    },
+    "sub_issues": {
+      "items": {
+        "$ref": "#/$defs/PlanSubIssue"
+      },
+      "minItems": 1,
+      "title": "Sub Issues",
+      "type": "array"
+    },
+    "open_questions": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Open Questions",
+      "type": "array"
+    }
+  },
+  "required": [
+    "summary",
+    "sub_issues"
+  ],
+  "title": "PlanResult",
+  "type": "object"
+}

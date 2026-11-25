@@ -1,0 +1,95 @@
+{
+  "$defs": {
+    "VerifyCommandResult": {
+      "additionalProperties": false,
+      "description": "Outcome of executing a single verification command from ``.agentic/config.yaml``.",
+      "properties": {
+        "command": {
+          "minLength": 1,
+          "title": "Command",
+          "type": "string"
+        },
+        "passed": {
+          "title": "Passed",
+          "type": "boolean"
+        },
+        "summary": {
+          "default": "",
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command",
+        "passed"
+      ],
+      "title": "VerifyCommandResult",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Structured JSON output produced by the ``code_and_test`` prompt.",
+  "properties": {
+    "summary": {
+      "minLength": 1,
+      "title": "Summary",
+      "type": "string"
+    },
+    "files_changed": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Files Changed",
+      "type": "array"
+    },
+    "tests_added_or_updated": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Tests Added Or Updated",
+      "type": "array"
+    },
+    "verify_results": {
+      "items": {
+        "$ref": "#/$defs/VerifyCommandResult"
+      },
+      "title": "Verify Results",
+      "type": "array"
+    },
+    "commit_message": {
+      "minLength": 1,
+      "title": "Commit Message",
+      "type": "string"
+    },
+    "pr_title": {
+      "minLength": 1,
+      "title": "Pr Title",
+      "type": "string"
+    },
+    "pr_body": {
+      "minLength": 1,
+      "title": "Pr Body",
+      "type": "string"
+    },
+    "blocked_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Blocked Reason"
+    }
+  },
+  "required": [
+    "summary",
+    "commit_message",
+    "pr_title",
+    "pr_body"
+  ],
+  "title": "CodeTaskResult",
+  "type": "object"
+}

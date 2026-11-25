@@ -1,0 +1,82 @@
+{
+  "$defs": {
+    "VerifyCommandResult": {
+      "additionalProperties": false,
+      "description": "Outcome of executing a single verification command from ``.agentic/config.yaml``.",
+      "properties": {
+        "command": {
+          "minLength": 1,
+          "title": "Command",
+          "type": "string"
+        },
+        "passed": {
+          "title": "Passed",
+          "type": "boolean"
+        },
+        "summary": {
+          "default": "",
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command",
+        "passed"
+      ],
+      "title": "VerifyCommandResult",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Structured JSON output produced by the ``fix_ci`` prompt.",
+  "properties": {
+    "root_cause": {
+      "minLength": 1,
+      "title": "Root Cause",
+      "type": "string"
+    },
+    "summary": {
+      "minLength": 1,
+      "title": "Summary",
+      "type": "string"
+    },
+    "files_changed": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Files Changed",
+      "type": "array"
+    },
+    "verify_results": {
+      "items": {
+        "$ref": "#/$defs/VerifyCommandResult"
+      },
+      "title": "Verify Results",
+      "type": "array"
+    },
+    "commit_message": {
+      "minLength": 1,
+      "title": "Commit Message",
+      "type": "string"
+    },
+    "blocked_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Blocked Reason"
+    }
+  },
+  "required": [
+    "root_cause",
+    "summary",
+    "commit_message"
+  ],
+  "title": "FixCIResult",
+  "type": "object"
+}
