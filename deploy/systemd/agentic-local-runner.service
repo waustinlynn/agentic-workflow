@@ -1,0 +1,17 @@
+[Unit]
+Description=Agentic Workflow Phase 1 Local SQS FIFO Worker Daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/repos/agentic-agent
+EnvironmentFile=%h/.config/agentic-workflow/local-runner.env
+ExecStart=%h/repos/agentic-agent/.venv/bin/agentic-local-runner
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=90
+
+[Install]
+WantedBy=default.target
