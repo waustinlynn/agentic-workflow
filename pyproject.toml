@@ -17,6 +17,7 @@ dependencies = [
 ]
 
 [project.scripts]
+agentic = "worker.onboard:main"
 agentic-local-runner = "worker.local_runner:main"
 
 [project.optional-dependencies]

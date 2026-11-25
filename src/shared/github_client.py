@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
@@ -127,6 +128,60 @@ class GitHubClient:
         resp = self._request(
             "GET", repo_full_name, f"/repos/{repo_full_name}/issues/{issue_number}"
         )
+        data: dict[str, Any] = resp.json()
+        return data
+
+    def get_repository(self, repo_full_name: str) -> dict[str, Any]:
+        resp = self._request("GET", repo_full_name, f"/repos/{repo_full_name}")
+        data: dict[str, Any] = resp.json()
+        return data
+
+    def get_file_content(
+        self,
+        repo_full_name: str,
+        file_path: str,
+        *,
+        ref: str | None = None,
+    ) -> str | None:
+        """Fetch a UTF-8 file from a repository via the GitHub Contents API (None if 404)."""
+        encoded_path = "/".join(quote(part, safe="") for part in file_path.strip("/").split("/"))
+        params = {"ref": ref} if ref else None
+        try:
+            resp = self._request(
+                "GET",
+                repo_full_name,
+                f"/repos/{repo_full_name}/contents/{encoded_path}",
+                params=params,
+            )
+        except GitHubAPIError as exc:
+            if exc.status_code == 404:
+                return None
+            raise
+
+        payload: dict[str, Any] = resp.json()
+        raw_content = payload.get("content")
+        encoding = payload.get("encoding")
+        if isinstance(raw_content, str) and encoding == "base64":
+            return base64.b64decode(raw_content).decode("utf-8")
+        return str(raw_content) if raw_content is not None else None
+
+    def get_branch_protection(
+        self,
+        repo_full_name: str,
+        branch: str,
+    ) -> dict[str, Any] | None:
+        """Fetch branch protection rules for ``branch`` (returns None if unprotected/404)."""
+        encoded_branch = quote(branch, safe="")
+        try:
+            resp = self._request(
+                "GET",
+                repo_full_name,
+                f"/repos/{repo_full_name}/branches/{encoded_branch}/protection",
+            )
+        except GitHubAPIError as exc:
+            if exc.status_code in {403, 404}:
+                return None
+            raise
         data: dict[str, Any] = resp.json()
         return data
 
