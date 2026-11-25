@@ -181,6 +181,132 @@ class GitHubClient:
         data: list[dict[str, Any]] = resp.json()
         return data
 
+    def list_pull_requests(
+        self,
+        repo_full_name: str,
+        *,
+        head: str | None = None,
+        state: str = "open",
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {"state": state, "per_page": 50}
+        if head is not None:
+            params["head"] = head
+        resp = self._request(
+            "GET",
+            repo_full_name,
+            f"/repos/{repo_full_name}/pulls",
+            params=params,
+        )
+        data: list[dict[str, Any]] = resp.json()
+        return data
+
+    def create_pull_request(
+        self,
+        repo_full_name: str,
+        *,
+        title: str,
+        body: str,
+        head: str,
+        base: str,
+    ) -> dict[str, Any]:
+        resp = self._request(
+            "POST",
+            repo_full_name,
+            f"/repos/{repo_full_name}/pulls",
+            json_body={"title": title, "body": body, "head": head, "base": base},
+        )
+        data: dict[str, Any] = resp.json()
+        return data
+
+    def list_pull_request_reviews(
+        self,
+        repo_full_name: str,
+        pr_number: int,
+    ) -> list[dict[str, Any]]:
+        resp = self._request(
+            "GET",
+            repo_full_name,
+            f"/repos/{repo_full_name}/pulls/{pr_number}/reviews",
+            params={"per_page": 100},
+        )
+        data: list[dict[str, Any]] = resp.json()
+        return data
+
+    def list_pull_request_review_comments(
+        self,
+        repo_full_name: str,
+        pr_number: int,
+    ) -> list[dict[str, Any]]:
+        resp = self._request(
+            "GET",
+            repo_full_name,
+            f"/repos/{repo_full_name}/pulls/{pr_number}/comments",
+            params={"per_page": 100},
+        )
+        data: list[dict[str, Any]] = resp.json()
+        return data
+
+    def create_sub_issue(
+        self,
+        repo_full_name: str,
+        parent_issue_number: int,
+        *,
+        title: str,
+        body: str,
+        labels: Iterable[str] = (),
+    ) -> dict[str, Any]:
+        """Create a child issue and link it as a native GitHub sub-issue."""
+        created_resp = self._request(
+            "POST",
+            repo_full_name,
+            f"/repos/{repo_full_name}/issues",
+            json_body={"title": title, "body": body, "labels": list(labels)},
+        )
+        child: dict[str, Any] = created_resp.json()
+        child_id = child.get("id")
+        if isinstance(child_id, int):
+            self._request(
+                "POST",
+                repo_full_name,
+                f"/repos/{repo_full_name}/issues/{parent_issue_number}/sub_issues",
+                json_body={"sub_issue_id": child_id},
+            )
+        return child
+
+    def get_failed_ci_summary(self, repo_full_name: str, ref: str) -> str:
+        """Collect failure titles, summaries, and output text from failed check runs."""
+        encoded_ref = quote(ref, safe="")
+        checks_resp = self._request(
+            "GET",
+            repo_full_name,
+            f"/repos/{repo_full_name}/commits/{encoded_ref}/check-runs",
+            params={"per_page": 100},
+        ).json()
+
+        sections: list[str] = []
+        for run in checks_resp.get("check_runs", []):
+            conclusion = str(run.get("conclusion") or "")
+            if conclusion not in _FAILURE_CONCLUSIONS:
+                continue
+            name = str(run.get("name", "unnamed-check"))
+            output = run.get("output") or {}
+            title = str(output.get("title") or "").strip()
+            summary = str(output.get("summary") or "").strip()
+            text = str(output.get("text") or "").strip()
+            details_url = str(run.get("details_url") or run.get("html_url") or "").strip()
+            parts = [f"### Failed Check: {name} ({conclusion})"]
+            if details_url:
+                parts.append(f"URL: {details_url}")
+            if title:
+                parts.append(f"Title: {title}")
+            if summary:
+                parts.append(summary)
+            if text:
+                parts.append(text)
+            sections.append("\n".join(parts))
+
+        return "\n\n---\n\n".join(sections)
+
     def get_ci_status(self, repo_full_name: str, ref: str) -> CIStatusSummary:
         """Aggregate GitHub Check Runs and Commit Statuses for a commit SHA or branch."""
         encoded_ref = quote(ref, safe="")
