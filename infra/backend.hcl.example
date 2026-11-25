@@ -1,0 +1,3 @@
+# Copy to infra/backend.hcl (gitignored) or run infra/scripts/bootstrap-state.sh
+bucket = "agentic-workflow-tfstate-<AWS_ACCOUNT_ID>-us-east-1"
+region = "us-east-1"

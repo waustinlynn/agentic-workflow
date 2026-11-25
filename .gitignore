@@ -24,8 +24,12 @@ htmlcov/
 .terraform/
 *.tfstate
 *.tfstate.*
+*.tfplan
+tfplan
 *.tfvars
 !*.tfvars.example
+infra/backend.hcl
+infra/.build/
 crash.log
 override.tf
 override.tf.json

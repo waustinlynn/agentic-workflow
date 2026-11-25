@@ -1,0 +1,12 @@
+# Example local tfvars (copy to infra/terraform.tfvars, which is gitignored)
+aws_region  = "us-east-1"
+environment = "prod"
+
+initial_repos = {
+  "waustinlynn/agentic-workflow" = {
+    message_group_id = "repo-waustinlynn-agentic-workflow"
+    execution_target = "local"
+    runtime          = "python"
+    enabled          = true
+  }
+}
