@@ -68,11 +68,18 @@ resource "aws_sqs_queue" "worker_tasks" {
   receive_wait_time_seconds   = 20
   message_retention_seconds   = 345600
   sqs_managed_sse_enabled     = true
+}
 
+resource "aws_sqs_queue_redrive_policy" "worker_tasks" {
+  for_each = local.active_worker_runtimes
+
+  queue_url = aws_sqs_queue.worker_tasks[each.key].id
   redrive_policy = jsonencode({
     deadLetterTargetArn = aws_sqs_queue.tasks_dlq.arn
     maxReceiveCount     = var.sqs_max_receive_count
   })
+
+  depends_on = [aws_sqs_queue_redrive_allow_policy.tasks_dlq]
 }
 
 resource "aws_cloudwatch_log_group" "worker" {
