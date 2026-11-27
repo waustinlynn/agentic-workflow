@@ -254,7 +254,7 @@ class TestAntigravitySdkBackend:
             async def __aexit__(self, *_exc: Any) -> None:
                 return None
 
-            def chat(self, prompt: str) -> _FakeChatResponse:
+            async def chat(self, prompt: str) -> _FakeChatResponse:
                 recorded["prompt"] = prompt
                 return _FakeChatResponse(
                     text_val='```json\n{"ok": true}\n```',
@@ -317,7 +317,7 @@ class TestAntigravitySdkBackend:
             async def __aexit__(self, *_exc: Any) -> None:
                 return None
 
-            def chat(self, _prompt: str) -> _FakeChatResponse:
+            async def chat(self, _prompt: str) -> _FakeChatResponse:
                 return slow_response
 
         fake_sdk = SimpleNamespace(

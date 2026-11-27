@@ -204,3 +204,9 @@ variable "lambda_worker_agent_backend" {
     error_message = "lambda_worker_agent_backend must be 'sdk' or 'agy_cli'."
   }
 }
+
+variable "lambda_worker_model" {
+  description = "Optional Antigravity/Gemini model override passed as ANTIGRAVITY_MODEL to Phase 2 Lambda workers."
+  type        = string
+  default     = ""
+}

@@ -378,7 +378,7 @@ class AntigravitySdkBackend(AgentBackend):
             return None
 
         # Always disable interactive/out-of-band tools in autonomous headless execution.
-        disabled_names = ["ASK_QUESTION", "SCHEDULE", "GENERATE_IMAGE"]
+        disabled_names = ["ASK_QUESTION", "SCHEDULE", "GENERATE_IMAGE", "RUN_WORKFLOW"]
         if read_only:
             disabled_names.extend(["CREATE_FILE", "EDIT_FILE", "RUN_COMMAND"])
 
@@ -433,7 +433,7 @@ class AntigravitySdkBackend(AgentBackend):
             config = sdk.LocalAgentConfig(**local_cfg_kwargs)
 
             async with sdk.Agent(config) as agent:
-                response = agent.chat(prompt)
+                response = await asyncio.wait_for(agent.chat(prompt), timeout=timeout)
                 try:
                     chunks = await asyncio.wait_for(response.resolve(), timeout=timeout)
                 except TimeoutError:

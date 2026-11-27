@@ -174,6 +174,7 @@ resource "aws_lambda_function" "worker" {
       GITHUB_REVIEWER_SECRET_ARN         = aws_secretsmanager_secret.github_reviewer_app.arn
       ANTIGRAVITY_API_KEY_SECRET_ARN     = aws_secretsmanager_secret.antigravity_api_key.arn
       AGENT_BACKEND                      = var.lambda_worker_agent_backend
+      ANTIGRAVITY_MODEL                  = var.lambda_worker_model
       LAMBDA_TIMEOUT_SECONDS             = tostring(var.lambda_worker_timeout_seconds)
       LAMBDA_SOFT_TIMEOUT_BUFFER_SECONDS = tostring(var.lambda_worker_soft_timeout_buffer_seconds)
       AGENTIC_WORKSPACE_DIR              = "/tmp/agentic-workspaces"
