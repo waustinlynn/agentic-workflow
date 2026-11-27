@@ -341,7 +341,7 @@ class AgyCliBackend(AgentBackend):
 
 
 class AntigravitySdkBackend(AgentBackend):
-    """Wraps the ``google-antigravity`` Python SDK (local OAuth or headless Vertex/API key)."""
+    """Wraps the ``google-antigravity`` Python SDK (``google.antigravity``)."""
 
     def __init__(
         self,
@@ -349,23 +349,43 @@ class AntigravitySdkBackend(AgentBackend):
         api_key: str | None = None,
         vertex: bool = False,
         model: str | None = None,
+        app_data_dir: str | None = None,
         sdk_module: Any | None = None,
     ) -> None:
         self._api_key = api_key
         self._vertex = vertex
         self._model = model
+        self._app_data_dir = app_data_dir or os.environ.get(
+            "ANTIGRAVITY_APP_DATA_DIR", "/tmp/.antigravity"
+        )
         self._sdk_module = sdk_module
 
     def _load_sdk(self) -> Any:
         if self._sdk_module is not None:
             return self._sdk_module
         try:
-            return importlib.import_module("antigravity")
+            return importlib.import_module("google.antigravity")
         except ImportError as exc:
             raise AgentBackendError(
-                "google-antigravity Python SDK is not installed; install it or set "
-                "AGENT_BACKEND=agy_cli"
+                "google-antigravity Python SDK is not installed; install 'google-antigravity' "
+                "or set AGENT_BACKEND=agy_cli"
             ) from exc
+
+    def _build_capabilities(self, sdk: Any, *, read_only: bool) -> Any | None:
+        capabilities_cls = getattr(sdk, "CapabilitiesConfig", None)
+        builtin_tools = getattr(sdk, "BuiltinTools", None)
+        if capabilities_cls is None or builtin_tools is None:
+            return None
+
+        # Always disable interactive/out-of-band tools in autonomous headless execution.
+        disabled_names = ["ASK_QUESTION", "SCHEDULE", "GENERATE_IMAGE"]
+        if read_only:
+            disabled_names.extend(["CREATE_FILE", "EDIT_FILE", "RUN_COMMAND"])
+
+        disabled = [
+            getattr(builtin_tools, name) for name in disabled_names if hasattr(builtin_tools, name)
+        ]
+        return capabilities_cls(disabled_tools=disabled)
 
     def run_turn(
         self,
@@ -390,8 +410,10 @@ class AntigravitySdkBackend(AgentBackend):
         started = time.monotonic()
 
         async def _execute() -> AgentTurnResult:
+            Path(self._app_data_dir).mkdir(parents=True, exist_ok=True)
             local_cfg_kwargs: dict[str, Any] = {
-                "workspace": str(workspace_dir),
+                "workspaces": [str(workspace_dir)],
+                "app_data_dir": self._app_data_dir,
             }
             if self._vertex:
                 local_cfg_kwargs["vertex"] = True
@@ -399,46 +421,62 @@ class AntigravitySdkBackend(AgentBackend):
                 local_cfg_kwargs["api_key"] = self._api_key
             if self._model:
                 local_cfg_kwargs["model"] = self._model
+            if conversation_id:
+                local_cfg_kwargs["conversation_id"] = conversation_id
+            if schema_dict is not None:
+                local_cfg_kwargs["response_schema"] = schema_dict
 
-            capabilities_cls = getattr(sdk, "CapabilitiesConfig", None)
-            if capabilities_cls is not None:
-                local_cfg_kwargs["capabilities"] = capabilities_cls(
-                    allow_edits=not read_only,
-                )
+            capabilities = self._build_capabilities(sdk, read_only=read_only)
+            if capabilities is not None:
+                local_cfg_kwargs["capabilities"] = capabilities
 
-            config_cls = sdk.LocalAgentConfig
-            agent_cls = sdk.Agent
-            config = config_cls(**local_cfg_kwargs)
+            config = sdk.LocalAgentConfig(**local_cfg_kwargs)
 
-            async with agent_cls(config) as agent:
-                run_kwargs: dict[str, Any] = {}
-                if conversation_id:
-                    run_kwargs["conversation_id"] = conversation_id
-                if schema_dict is not None:
-                    run_kwargs["json_schema"] = schema_dict
+            async with sdk.Agent(config) as agent:
+                response = agent.chat(prompt)
+                try:
+                    chunks = await asyncio.wait_for(response.resolve(), timeout=timeout)
+                except TimeoutError:
+                    cancel = getattr(response, "cancel", None)
+                    if callable(cancel):
+                        await cancel()
+                    raise
 
-                raw_response = await asyncio.wait_for(
-                    agent.run(prompt, **run_kwargs),
-                    timeout=timeout,
-                )
+                text = str(await response.text())
+                raw_structured = await response.structured_output()
+                resp_cid = getattr(agent, "conversation_id", None) or conversation_id
 
-            text = str(getattr(raw_response, "text", raw_response))
-            structured = getattr(raw_response, "structured_output", None)
-            if not isinstance(structured, dict):
+            structured: dict[str, Any] | None = None
+            if isinstance(raw_structured, dict):
+                structured = raw_structured
+            elif hasattr(raw_structured, "model_dump"):
+                dumped = raw_structured.model_dump()
+                if isinstance(dumped, dict):
+                    structured = dumped
+            elif isinstance(raw_structured, str):
+                structured = _extract_json_object(raw_structured)
+
+            if structured is None:
                 structured = _extract_json_object(text)
+
             if schema_dict is not None and structured is None:
                 raise AgentBackendError(
                     "Expected structured JSON output from Antigravity SDK, "
                     f"got unparseable text: {text[:300]!r}"
                 )
 
-            resp_cid = getattr(raw_response, "conversation_id", None) or conversation_id
-            resp_tools = tuple(str(t) for t in getattr(raw_response, "tool_calls", ()))
+            tool_names: list[str] = []
+            for chunk in chunks:
+                if type(chunk).__name__ == "ToolCall":
+                    tool_name = getattr(chunk, "name", None) or getattr(chunk, "tool_name", None)
+                    if isinstance(tool_name, str) and tool_name:
+                        tool_names.append(tool_name)
+
             return AgentTurnResult(
                 text=text,
                 structured_output=structured,
                 conversation_id=str(resp_cid) if resp_cid else None,
-                tool_calls=resp_tools,
+                tool_calls=tuple(tool_names),
                 duration_seconds=time.monotonic() - started,
             )
 

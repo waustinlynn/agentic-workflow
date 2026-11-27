@@ -186,11 +186,38 @@ class TestAgyCliBackend:
 
 
 @dataclass
-class _FakeSdkResponse:
-    text: str
-    conversation_id: str = "sdk-conv-9"
-    tool_calls: tuple[str, ...] = ("read_file",)
-    structured_output: dict[str, Any] | None = None
+class ToolCall:
+    name: str
+
+
+class _FakeChatResponse:
+    def __init__(
+        self,
+        *,
+        text_val: str,
+        structured: Any | None = None,
+        chunks: list[Any] | None = None,
+        delay: float = 0.0,
+    ) -> None:
+        self._text = text_val
+        self._structured = structured
+        self._chunks = chunks or []
+        self._delay = delay
+        self.cancelled = False
+
+    async def resolve(self) -> list[Any]:
+        if self._delay:
+            await asyncio.sleep(self._delay)
+        return list(self._chunks)
+
+    async def text(self) -> str:
+        return self._text
+
+    async def structured_output(self) -> Any | None:
+        return self._structured
+
+    async def cancel(self) -> None:
+        self.cancelled = True
 
 
 class TestAntigravitySdkBackend:
@@ -199,6 +226,14 @@ class TestAntigravitySdkBackend:
         tmp_path: Path,
     ) -> None:
         recorded: dict[str, Any] = {}
+
+        class _FakeBuiltinTools:
+            ASK_QUESTION = "ask_question"
+            SCHEDULE = "schedule"
+            GENERATE_IMAGE = "generate_image"
+            CREATE_FILE = "create_file"
+            EDIT_FILE = "edit_file"
+            RUN_COMMAND = "run_command"
 
         class _FakeCapabilities:
             def __init__(self, **kwargs: Any) -> None:
@@ -211,6 +246,7 @@ class TestAntigravitySdkBackend:
         class _FakeAgent:
             def __init__(self, config: Any) -> None:
                 self._config = config
+                self.conversation_id = "sdk-conv-42"
 
             async def __aenter__(self) -> _FakeAgent:
                 return self
@@ -218,24 +254,25 @@ class TestAntigravitySdkBackend:
             async def __aexit__(self, *_exc: Any) -> None:
                 return None
 
-            async def run(self, prompt: str, **kwargs: Any) -> _FakeSdkResponse:
+            def chat(self, prompt: str) -> _FakeChatResponse:
                 recorded["prompt"] = prompt
-                recorded["run_kwargs"] = kwargs
-                return _FakeSdkResponse(
-                    text='```json\n{"ok": true}\n```',
-                    conversation_id="sdk-conv-42",
-                    tool_calls=("list_dir", "read_file"),
+                return _FakeChatResponse(
+                    text_val='```json\n{"ok": true}\n```',
+                    structured={"ok": True},
+                    chunks=[ToolCall(name="list_directory"), ToolCall(name="view_file")],
                 )
 
         fake_sdk = SimpleNamespace(
             Agent=_FakeAgent,
             LocalAgentConfig=_FakeLocalAgentConfig,
             CapabilitiesConfig=_FakeCapabilities,
+            BuiltinTools=_FakeBuiltinTools,
         )
         backend = AntigravitySdkBackend(
             api_key="vertex-key",
             vertex=True,
             model="gemini-2.5-pro",
+            app_data_dir=str(tmp_path / "app-data"),
             sdk_module=fake_sdk,
         )
 
@@ -250,17 +287,27 @@ class TestAntigravitySdkBackend:
 
         assert recorded["config_kwargs"]["vertex"] is True
         assert recorded["config_kwargs"]["api_key"] == "vertex-key"
-        assert recorded["config_kwargs"]["workspace"] == str(tmp_path)
-        assert recorded["config_kwargs"]["capabilities"].kwargs == {"allow_edits": False}
-        assert recorded["run_kwargs"]["conversation_id"] == "prev-1"
-        assert recorded["run_kwargs"]["json_schema"] == {"type": "object"}
+        assert recorded["config_kwargs"]["workspaces"] == [str(tmp_path)]
+        assert recorded["config_kwargs"]["conversation_id"] == "prev-1"
+        assert recorded["config_kwargs"]["response_schema"] == {"type": "object"}
+        assert "create_file" in recorded["config_kwargs"]["capabilities"].kwargs["disabled_tools"]
+        assert "edit_file" in recorded["config_kwargs"]["capabilities"].kwargs["disabled_tools"]
+        assert "run_command" in recorded["config_kwargs"]["capabilities"].kwargs["disabled_tools"]
+        assert recorded["prompt"] == "Plan issue #1"
 
         assert result.conversation_id == "sdk-conv-42"
         assert result.structured_output == {"ok": True}
-        assert result.tool_calls == ("list_dir", "read_file")
+        assert result.tool_calls == ("list_directory", "view_file")
 
-    def test_sdk_timeout_raises_agent_timeout_error(self, tmp_path: Path) -> None:
+    def test_sdk_timeout_cancels_response_and_raises_agent_timeout_error(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        slow_response = _FakeChatResponse(text_val="too late", delay=5.0)
+
         class _SlowAgent:
+            conversation_id = None
+
             def __init__(self, _config: Any) -> None:
                 pass
 
@@ -270,17 +317,20 @@ class TestAntigravitySdkBackend:
             async def __aexit__(self, *_exc: Any) -> None:
                 return None
 
-            async def run(self, _prompt: str, **_kwargs: Any) -> _FakeSdkResponse:
-                await asyncio.sleep(5)
-                return _FakeSdkResponse(text="too late")
+            def chat(self, _prompt: str) -> _FakeChatResponse:
+                return slow_response
 
         fake_sdk = SimpleNamespace(
             Agent=_SlowAgent,
             LocalAgentConfig=lambda **kw: kw,
         )
-        backend = AntigravitySdkBackend(sdk_module=fake_sdk)
+        backend = AntigravitySdkBackend(
+            app_data_dir=str(tmp_path / "app-data"),
+            sdk_module=fake_sdk,
+        )
         with pytest.raises(AgentTimeoutError, match="timed out"):
             backend.run_turn("hello", tmp_path, timeout=0.05)
+        assert slow_response.cancelled is True
 
 
 class TestBackendFactory:
