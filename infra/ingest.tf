@@ -53,10 +53,13 @@ data "aws_iam_policy_document" "ingest_lambda" {
   }
 
   statement {
-    sid       = "EnqueueTasks"
-    effect    = "Allow"
-    actions   = ["sqs:SendMessage"]
-    resources = [aws_sqs_queue.tasks.arn]
+    sid     = "EnqueueTasks"
+    effect  = "Allow"
+    actions = ["sqs:SendMessage"]
+    resources = concat(
+      [aws_sqs_queue.tasks.arn],
+      [for q in aws_sqs_queue.worker_tasks : q.arn],
+    )
   }
 }
 
@@ -80,11 +83,12 @@ resource "aws_lambda_function" "ingest" {
 
   environment {
     variables = {
-      SQS_QUEUE_URL        = aws_sqs_queue.tasks.url
-      REPO_REGISTRY_TABLE  = aws_dynamodb_table.repo_registry.name
-      WEBHOOK_SECRET_ARN   = aws_secretsmanager_secret.github_webhook.arn
-      CODER_APP_SECRET_ARN = aws_secretsmanager_secret.github_coder_app.arn
-      ALLOWED_ACTORS       = join(",", var.allowed_actors)
+      SQS_QUEUE_URL          = aws_sqs_queue.tasks.url
+      SQS_RUNTIME_QUEUE_URLS = jsonencode({ for k, q in aws_sqs_queue.worker_tasks : k => q.url })
+      REPO_REGISTRY_TABLE    = aws_dynamodb_table.repo_registry.name
+      WEBHOOK_SECRET_ARN     = aws_secretsmanager_secret.github_webhook.arn
+      CODER_APP_SECRET_ARN   = aws_secretsmanager_secret.github_coder_app.arn
+      ALLOWED_ACTORS         = join(",", var.allowed_actors)
     }
   }
 

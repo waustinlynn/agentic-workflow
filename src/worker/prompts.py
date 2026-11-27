@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,23 @@ from shared.models import (
 )
 
 DEFAULT_PROMPTS_DIR = Path(__file__).resolve().parents[2] / "prompts"
+
+
+def resolve_default_prompts_dir() -> Path:
+    """Resolve the prompts directory across local checkouts and Lambda container layouts."""
+    env_dir = os.environ.get("AGENTIC_PROMPTS_DIR", "").strip()
+    if env_dir:
+        return Path(env_dir)
+
+    candidates = (
+        DEFAULT_PROMPTS_DIR,
+        Path(__file__).resolve().parents[1] / "prompts",
+    )
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+    return DEFAULT_PROMPTS_DIR
+
 
 TASK_TEMPLATE_FILENAMES: dict[TaskType, str] = {
     TaskType.PLAN: "plan.md",
@@ -129,7 +147,7 @@ class PromptAssembler:
         *,
         budgets: PromptBudgets | None = None,
     ) -> None:
-        self.prompts_dir = prompts_dir or DEFAULT_PROMPTS_DIR
+        self.prompts_dir = prompts_dir or resolve_default_prompts_dir()
         self.budgets = budgets or PromptBudgets()
 
     def get_schema_path(self, task_type: TaskType) -> Path:

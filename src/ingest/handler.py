@@ -12,7 +12,7 @@ from typing import Any, Protocol
 import boto3
 
 from ingest.registry import DynamoDBRepoRegistry, RepoRegistry
-from ingest.router import route_webhook_event
+from ingest.router import resolve_runtime_queue_key, route_webhook_event
 from ingest.security import verify_github_signature
 from shared.github_auth import AppIdentity, GitHubAppAuth, SecretsManagerCredentialProvider
 from shared.github_client import BootstrapLabelsResult, GitHubClient
@@ -64,6 +64,7 @@ class IngestService:
         sqs_client: SQSSenderProtocol,
         sqs_queue_url: str,
         allowed_actors: frozenset[str],
+        runtime_queue_urls: Mapping[str, str] | None = None,
         label_bootstrapper: Callable[[str], BootstrapLabelsResult] | None = None,
     ) -> None:
         self._webhook_secret_provider = webhook_secret_provider
@@ -71,7 +72,32 @@ class IngestService:
         self._sqs_client = sqs_client
         self._sqs_queue_url = sqs_queue_url
         self._allowed_actors = allowed_actors
+        self._runtime_queue_urls = {
+            k.strip().lower(): v.strip()
+            for k, v in (runtime_queue_urls or {}).items()
+            if k.strip() and v.strip()
+        }
         self._label_bootstrapper = label_bootstrapper
+
+    def _select_queue(self, decision_task: Any) -> tuple[str, str]:
+        runtime_key = resolve_runtime_queue_key(decision_task)
+        if runtime_key is None:
+            return self._sqs_queue_url, "local"
+
+        direct_url = self._runtime_queue_urls.get(runtime_key)
+        if direct_url:
+            return direct_url, f"lambda:{runtime_key}"
+
+        base_url = self._runtime_queue_urls.get("base")
+        if base_url:
+            logger.warning(
+                "No dedicated Lambda FIFO queue configured for runtime=%s; "
+                "falling back to lambda:base queue",
+                runtime_key,
+            )
+            return base_url, "lambda:base"
+
+        return self._sqs_queue_url, "local"
 
     def handle_event(self, event: Mapping[str, Any]) -> dict[str, Any]:
         """Validate HMAC signature, enforce public-repo guardrails, and dispatch to SQS FIFO."""
@@ -186,18 +212,20 @@ class IngestService:
             )
 
         assert decision.task is not None and decision.registry_entry is not None
+        target_queue_url, queue_route = self._select_queue(decision.task)
         sqs_resp = self._sqs_client.send_message(
-            QueueUrl=self._sqs_queue_url,
+            QueueUrl=target_queue_url,
             MessageBody=decision.task.model_dump_json(),
             MessageGroupId=decision.registry_entry.message_group_id,
             MessageDeduplicationId=delivery_id,
         )
         message_id = str(sqs_resp.get("MessageId", ""))
         logger.info(
-            "Enqueued task=%s repo=%s item=%d group=%s delivery_id=%s sqs_message_id=%s",
+            "Enqueued task=%s repo=%s item=%d route=%s group=%s delivery_id=%s sqs_message_id=%s",
             decision.task.task_type.value,
             decision.task.repo_full_name,
             decision.task.issue_or_pr_number,
+            queue_route,
             decision.registry_entry.message_group_id,
             delivery_id,
             message_id,
@@ -208,6 +236,7 @@ class IngestService:
                 "status": "enqueued",
                 "task_type": decision.task.task_type.value,
                 "repo_full_name": decision.task.repo_full_name,
+                "queue_route": queue_route,
                 "message_group_id": decision.registry_entry.message_group_id,
                 "deduplication_id": delivery_id,
                 "message_id": message_id,
@@ -234,12 +263,25 @@ class _CachedWebhookSecret:
 _DEFAULT_SERVICE: IngestService | None = None
 
 
+def _parse_runtime_queue_urls(raw: str) -> dict[str, str]:
+    cleaned = raw.strip()
+    if not cleaned:
+        return {}
+    parsed = json.loads(cleaned)
+    if not isinstance(parsed, dict):
+        raise ValueError(
+            "SQS_RUNTIME_QUEUE_URLS must be a JSON object mapping runtime -> queue URL"
+        )
+    return {str(k).strip().lower(): str(v).strip() for k, v in parsed.items() if str(v).strip()}
+
+
 def _get_default_service() -> IngestService:
     global _DEFAULT_SERVICE
     if _DEFAULT_SERVICE is not None:
         return _DEFAULT_SERVICE
 
     queue_url = os.environ["SQS_QUEUE_URL"]
+    runtime_queue_urls = _parse_runtime_queue_urls(os.environ.get("SQS_RUNTIME_QUEUE_URLS", ""))
     registry_table = os.environ["REPO_REGISTRY_TABLE"]
     webhook_secret_arn = os.environ["WEBHOOK_SECRET_ARN"]
     coder_app_secret_arn = os.environ.get("CODER_APP_SECRET_ARN", "").strip()
@@ -265,6 +307,7 @@ def _get_default_service() -> IngestService:
         sqs_client=sqs_client,
         sqs_queue_url=queue_url,
         allowed_actors=allowed_actors,
+        runtime_queue_urls=runtime_queue_urls,
         label_bootstrapper=label_bootstrapper,
     )
     return _DEFAULT_SERVICE

@@ -62,3 +62,18 @@ output "local_runner_user_name" {
   description = "Dedicated IAM user name for the local runner (null if create_local_runner_iam_user=false)."
   value       = var.create_local_runner_iam_user ? aws_iam_user.local_runner[0].name : null
 }
+
+output "worker_ecr_repository_urls" {
+  description = "Map of runtime name -> ECR repository URL for Phase 2 Lambda container images."
+  value       = { for k, r in aws_ecr_repository.worker : k => r.repository_url }
+}
+
+output "worker_sqs_queue_urls" {
+  description = "Map of runtime name -> SQS FIFO queue URL for Phase 2 Lambda workers."
+  value       = { for k, q in aws_sqs_queue.worker_tasks : k => q.url }
+}
+
+output "worker_lambda_arns" {
+  description = "Map of runtime name -> AWS Lambda container worker ARN."
+  value       = { for k, fn in aws_lambda_function.worker : k => fn.arn }
+}

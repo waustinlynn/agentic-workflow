@@ -28,6 +28,9 @@ resource "aws_sqs_queue_redrive_allow_policy" "tasks_dlq" {
 
   redrive_allow_policy = jsonencode({
     redrivePermission = "byQueue"
-    sourceQueueArns   = [aws_sqs_queue.tasks.arn]
+    sourceQueueArns = concat(
+      [aws_sqs_queue.tasks.arn],
+      [for q in aws_sqs_queue.worker_tasks : q.arn],
+    )
   })
 }

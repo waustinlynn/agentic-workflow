@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 import re
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -67,6 +69,8 @@ def run_review_task(
     workspace_manager: WorkspaceManager,
     state_store: RunStateStore,
     clone_url: str | None = None,
+    deadline_monotonic: float | None = None,
+    monotonic_clock: Callable[[], float] | None = None,
 ) -> ReviewTaskOutcome:
     """Execute an Option A automated code review as ``agentic-reviewer[bot]``.
 
@@ -152,11 +156,20 @@ def run_review_task(
             )
         )
         schema_path = prompt_assembler.get_schema_path(TaskType.REVIEW)
+        timeout_seconds = float(repo_config.execution.timeout_minutes * 60)
+        if deadline_monotonic is not None:
+            clock = monotonic_clock or time.monotonic
+            remaining = deadline_monotonic - clock()
+            if remaining <= 1.0:
+                raise TimeoutError(
+                    "Soft execution deadline reached before starting automated code review."
+                )
+            timeout_seconds = min(timeout_seconds, remaining)
         turn = agent_backend.run_turn(
             prompt,
             ws.repo_dir,
             schema=schema_path,
-            timeout=float(repo_config.execution.timeout_minutes * 60),
+            timeout=timeout_seconds,
             read_only=True,
         )
         if turn.structured_output is None:

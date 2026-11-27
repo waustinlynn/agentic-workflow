@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -42,6 +44,31 @@ class TaskOutcome:
     conversation_id: str | None = None
 
 
+class TaskDeadlineExceededError(TimeoutError):
+    """Raised when a task hits its per-invocation soft execution deadline."""
+
+
+def compute_step_timeout(
+    configured_seconds: float,
+    deadline_monotonic: float | None,
+    *,
+    clock: Callable[[], float] = time.monotonic,
+    step_name: str = "task step",
+    min_remaining_seconds: float = 1.0,
+) -> float:
+    """Return the effective timeout capped by ``deadline_monotonic``, or raise if exhausted."""
+    if deadline_monotonic is None:
+        return configured_seconds
+    remaining = deadline_monotonic - clock()
+    if remaining <= min_remaining_seconds:
+        raise TaskDeadlineExceededError(
+            f"Soft execution deadline reached before {step_name} "
+            f"(remaining budget: {max(0.0, remaining):.1f}s). "
+            "Break the issue into smaller sub-tasks or increase timeout budget."
+        )
+    return min(configured_seconds, remaining)
+
+
 @dataclass(slots=True)
 class WorkerContext:
     """Dependency-injected collaborators for ``handle_task``."""
@@ -53,6 +80,16 @@ class WorkerContext:
     state_store: RunStateStore
     clone_url_override: str | None = None
     create_plan_sub_issues: bool = True
+    deadline_monotonic: float | None = None
+    monotonic_clock: Callable[[], float] = time.monotonic
+
+    def step_timeout(self, configured_minutes: int, *, step_name: str) -> float:
+        return compute_step_timeout(
+            float(configured_minutes * 60),
+            self.deadline_monotonic,
+            clock=self.monotonic_clock,
+            step_name=step_name,
+        )
 
 
 def _load_or_init_state(
@@ -206,7 +243,11 @@ def _handle_code_and_test(
         clone_url=ctx.clone_url_override,
     ) as ws:
         cfg = ws.repo_config
-        ws.run_setup_commands(timeout_per_command=float(cfg.execution.timeout_minutes * 60))
+        ws.run_setup_commands(
+            timeout_per_command=ctx.step_timeout(
+                cfg.execution.timeout_minutes, step_name="setup_commands"
+            )
+        )
 
         prompt = ctx.prompt_assembler.render(
             PromptContext(
@@ -225,7 +266,9 @@ def _handle_code_and_test(
             ws.repo_dir,
             schema=ctx.prompt_assembler.get_schema_path(TaskType.CODE_AND_TEST),
             conversation_id=state.conversation_id,
-            timeout=float(cfg.execution.timeout_minutes * 60),
+            timeout=ctx.step_timeout(
+                cfg.execution.timeout_minutes, step_name="code_and_test agent turn"
+            ),
             read_only=False,
         )
         if turn.structured_output is None:
@@ -235,7 +278,11 @@ def _handle_code_and_test(
         if result.blocked_reason:
             return _escalate_needs_human(ctx, envelope, state, reason=result.blocked_reason)
 
-        ws.run_verify_commands(timeout_per_command=float(cfg.execution.timeout_minutes * 60))
+        ws.run_verify_commands(
+            timeout_per_command=ctx.step_timeout(
+                cfg.execution.timeout_minutes, step_name="verify_commands"
+            )
+        )
         pushed_sha = ws.commit_and_push(result.commit_message)
         if pushed_sha is None:
             return _escalate_needs_human(
@@ -353,7 +400,11 @@ def _handle_address_review(
             pr_number=pr_number,
         )
 
-        ws.run_setup_commands(timeout_per_command=float(cfg.execution.timeout_minutes * 60))
+        ws.run_setup_commands(
+            timeout_per_command=ctx.step_timeout(
+                cfg.execution.timeout_minutes, step_name="setup_commands"
+            )
+        )
 
         reviews = coder.list_pull_request_reviews(repo, pr_number)
         inline_comments = coder.list_pull_request_review_comments(repo, pr_number)
@@ -379,7 +430,9 @@ def _handle_address_review(
             ws.repo_dir,
             schema=ctx.prompt_assembler.get_schema_path(TaskType.ADDRESS_REVIEW),
             conversation_id=state.conversation_id,
-            timeout=float(cfg.execution.timeout_minutes * 60),
+            timeout=ctx.step_timeout(
+                cfg.execution.timeout_minutes, step_name="address_review agent turn"
+            ),
             read_only=False,
         )
         if turn.structured_output is None:
@@ -389,7 +442,11 @@ def _handle_address_review(
         if result.blocked_reason:
             return _escalate_needs_human(ctx, envelope, state, reason=result.blocked_reason)
 
-        ws.run_verify_commands(timeout_per_command=float(cfg.execution.timeout_minutes * 60))
+        ws.run_verify_commands(
+            timeout_per_command=ctx.step_timeout(
+                cfg.execution.timeout_minutes, step_name="verify_commands"
+            )
+        )
         ws.commit_and_push(result.commit_message)
 
         addressed_bullets = "\n".join(f"- {item}" for item in result.addressed_comments)
@@ -476,7 +533,11 @@ def _handle_fix_ci(
             pr_number=pr_number,
         )
 
-        ws.run_setup_commands(timeout_per_command=float(cfg.execution.timeout_minutes * 60))
+        ws.run_setup_commands(
+            timeout_per_command=ctx.step_timeout(
+                cfg.execution.timeout_minutes, step_name="setup_commands"
+            )
+        )
         ci_logs = coder.get_failed_ci_summary(repo, head_sha) if head_sha else ""
         pr_diff = coder.get_pull_request_diff(repo, pr_number)
 
@@ -496,7 +557,7 @@ def _handle_fix_ci(
             ws.repo_dir,
             schema=ctx.prompt_assembler.get_schema_path(TaskType.FIX_CI),
             conversation_id=state.conversation_id,
-            timeout=float(cfg.execution.timeout_minutes * 60),
+            timeout=ctx.step_timeout(cfg.execution.timeout_minutes, step_name="fix_ci agent turn"),
             read_only=False,
         )
         if turn.structured_output is None:
@@ -506,7 +567,11 @@ def _handle_fix_ci(
         if result.blocked_reason:
             return _escalate_needs_human(ctx, envelope, state, reason=result.blocked_reason)
 
-        ws.run_verify_commands(timeout_per_command=float(cfg.execution.timeout_minutes * 60))
+        ws.run_verify_commands(
+            timeout_per_command=ctx.step_timeout(
+                cfg.execution.timeout_minutes, step_name="verify_commands"
+            )
+        )
         ws.commit_and_push(result.commit_message)
 
         coder.post_comment(
@@ -587,7 +652,7 @@ def _handle_plan(
             ws.repo_dir,
             schema=ctx.prompt_assembler.get_schema_path(TaskType.PLAN),
             conversation_id=state.conversation_id,
-            timeout=float(cfg.execution.timeout_minutes * 60),
+            timeout=ctx.step_timeout(cfg.execution.timeout_minutes, step_name="plan agent turn"),
             read_only=True,
         )
         if turn.structured_output is None:
@@ -663,6 +728,8 @@ def handle_task(envelope: TaskEnvelope, ctx: WorkerContext) -> TaskOutcome:
                 workspace_manager=ctx.workspace_manager,
                 state_store=ctx.state_store,
                 clone_url=ctx.clone_url_override,
+                deadline_monotonic=ctx.deadline_monotonic,
+                monotonic_clock=ctx.monotonic_clock,
             )
             return TaskOutcome(
                 status=review_outcome.status,

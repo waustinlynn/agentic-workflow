@@ -9,7 +9,20 @@ from worker.agent_backend import (
     AntigravitySdkBackend,
     create_agent_backend,
 )
-from worker.handlers import TaskOutcome, WorkerContext, handle_task
+from worker.handlers import (
+    TaskDeadlineExceededError,
+    TaskOutcome,
+    WorkerContext,
+    compute_step_timeout,
+    handle_task,
+)
+from worker.lambda_handler import (
+    LambdaWorkerConfig,
+    LambdaWorkerService,
+    SecretsManagerApiKeyLoader,
+    compute_deadline_monotonic,
+    lambda_handler,
+)
 from worker.local_runner import LocalRunnerConfig, LocalRunnerDaemon, VisibilityHeartbeat
 from worker.prompts import (
     DEFAULT_PROMPTS_DIR,
@@ -19,6 +32,7 @@ from worker.prompts import (
     PromptAssembler,
     PromptBudgets,
     PromptContext,
+    resolve_default_prompts_dir,
     truncate_text,
     wrap_untrusted,
 )
@@ -48,6 +62,8 @@ __all__ = [
     "CommandResult",
     "DynamoDBRunStateStore",
     "InMemoryRunStateStore",
+    "LambdaWorkerConfig",
+    "LambdaWorkerService",
     "LocalRunnerConfig",
     "LocalRunnerDaemon",
     "PromptAssembler",
@@ -55,15 +71,21 @@ __all__ = [
     "PromptContext",
     "ProtectedPathViolationError",
     "RunStateStore",
+    "SecretsManagerApiKeyLoader",
+    "TaskDeadlineExceededError",
     "TaskOutcome",
     "VisibilityHeartbeat",
     "WorkerContext",
     "WorkspaceError",
     "WorkspaceHandle",
     "WorkspaceManager",
+    "compute_deadline_monotonic",
+    "compute_step_timeout",
     "create_agent_backend",
     "find_protected_path_violations",
     "handle_task",
+    "lambda_handler",
+    "resolve_default_prompts_dir",
     "truncate_text",
     "wrap_untrusted",
 ]

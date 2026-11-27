@@ -7,6 +7,7 @@ Provisions the AWS control plane for `agentic-workflow` with near-$0 idle cost:
 - **Secrets Manager** placeholders (values populated out-of-band; never committed to git or Terraform state)
 - **Webhook Ingest Lambda** (`python3.12`, `arm64`) behind an **API Gateway HTTP API** (`POST /webhook/github` with edge throttling)
 - **Least-privilege IAM** roles/policies for the Ingest Lambda and Phase 1 local runner
+- **Phase 2 Serverless Workers** (`workers.tf`): ECR repositories (`worker-base`, `worker-python`, `worker-node`, `worker-infra`), per-runtime SQS FIFO queues, Lambda container functions (15 min timeout, writable `/tmp`, `ReportBatchItemFailures`), and runtime queue routing in the Ingest Lambda
 
 ## 1. One-Time S3 Remote State Bootstrap
 

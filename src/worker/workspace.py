@@ -340,6 +340,19 @@ class WorkspaceManager:
         )
         self.base_dir = (base_dir or default_root).resolve()
 
+    def cleanup_all(self) -> int:
+        """Remove leftover checkout directories under ``base_dir`` (safe for Lambda ``/tmp``)."""
+        if not self.base_dir.is_dir():
+            return 0
+        removed = 0
+        for child in list(self.base_dir.iterdir()):
+            if child.is_dir():
+                shutil.rmtree(child, ignore_errors=True)
+            else:
+                child.unlink(missing_ok=True)
+            removed += 1
+        return removed
+
     def checkout(
         self,
         repo_full_name: str,

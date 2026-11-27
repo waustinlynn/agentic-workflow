@@ -1,0 +1,18 @@
+# Phase 2 worker-python Lambda container image (layered on worker-base).
+# Supports fast in-Lambda verify_commands with uv, ruff, mypy, and pytest.
+ARG BASE_IMAGE=agentic-worker-base:latest
+FROM ghcr.io/astral-sh/uv:latest AS uv_bin
+FROM ${BASE_IMAGE}
+
+COPY --from=uv_bin /uv /uvx /usr/local/bin/
+
+RUN pip install --no-cache-dir ruff mypy pytest
+
+ENV UV_CACHE_DIR=/tmp/.cache/uv \
+    UV_PYTHON_CACHE_DIR=/tmp/.cache/uv-python \
+    RUFF_CACHE_DIR=/tmp/.cache/ruff \
+    MYPY_CACHE_DIR=/tmp/.cache/mypy \
+    PYTEST_CACHE_DIR=/tmp/.cache/pytest \
+    WORKER_RUNTIME=python
+
+CMD ["worker.lambda_handler.lambda_handler"]

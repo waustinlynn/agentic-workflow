@@ -9,7 +9,7 @@ from typing import Any, Literal
 from ingest.registry import RepoRegistry, RepoRegistryEntry
 from ingest.security import has_paused_label, is_actor_allowed, is_external_fork_pr
 from shared.labels import AgentLabel
-from shared.models import TaskEnvelope, TaskType
+from shared.models import ExecutionTarget, RuntimeKind, TaskEnvelope, TaskType
 
 _ISSUE_LABEL_TO_TASK: dict[str, TaskType] = {
     AgentLabel.PLAN.value: TaskType.PLAN,
@@ -17,6 +17,26 @@ _ISSUE_LABEL_TO_TASK: dict[str, TaskType] = {
 }
 
 _FAILURE_CHECK_CONCLUSIONS = frozenset({"failure", "timed_out"})
+_BASE_ONLY_TASK_TYPES = frozenset({TaskType.REVIEW, TaskType.PLAN})
+
+
+def resolve_runtime_queue_key(task: TaskEnvelope) -> str | None:
+    """Resolve the Lambda runtime queue key for ``task``, or ``None`` for the Phase 1 local queue.
+
+    Routing rules:
+    - ``execution_target == "local"`` -> ``None`` (primary local FIFO queue)
+    - ``execution_target == "lambda"``:
+      - ``review`` and ``plan`` tasks -> ``"base"`` (lightweight ``worker-base`` image)
+      - ``runtime`` in ``{"base", "ci-verified"}`` -> ``"base"``
+      - Any stack runtime (``python``, ``node``, ``infra``, etc.) -> ``task.runtime.value``
+    """
+    if task.execution_target is ExecutionTarget.LOCAL:
+        return None
+    if task.task_type in _BASE_ONLY_TASK_TYPES:
+        return RuntimeKind.BASE.value
+    if task.runtime in {RuntimeKind.BASE, RuntimeKind.CI_VERIFIED}:
+        return RuntimeKind.BASE.value
+    return task.runtime.value
 
 
 @dataclass(frozen=True, slots=True)

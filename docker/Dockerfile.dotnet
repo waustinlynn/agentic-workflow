@@ -1,0 +1,23 @@
+# Phase 2 worker-dotnet Lambda container image (layered on worker-base).
+# Pattern for .NET repositories running dotnet build/test inside Lambda.
+ARG BASE_IMAGE=agentic-worker-base:latest
+FROM ${BASE_IMAGE}
+
+ARG DOTNET_CHANNEL=8.0
+
+RUN dnf install -y icu libstdc++ \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf \
+    && curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh \
+    && bash /tmp/dotnet-install.sh --channel "${DOTNET_CHANNEL}" --install-dir /usr/local/dotnet \
+    && ln -sf /usr/local/dotnet/dotnet /usr/local/bin/dotnet \
+    && rm -f /tmp/dotnet-install.sh
+
+ENV DOTNET_ROOT=/usr/local/dotnet \
+    DOTNET_CLI_HOME=/tmp/.dotnet \
+    NUGET_PACKAGES=/tmp/.nuget/packages \
+    DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+    DOTNET_NOLOGO=1 \
+    WORKER_RUNTIME=dotnet
+
+CMD ["worker.lambda_handler.lambda_handler"]

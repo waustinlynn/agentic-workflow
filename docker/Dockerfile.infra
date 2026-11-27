@@ -1,0 +1,27 @@
+# Phase 2 worker-infra Lambda container image (layered on worker-base).
+# Supports fast in-Lambda verify_commands with Terraform and jq.
+ARG BASE_IMAGE=agentic-worker-base:latest
+FROM ${BASE_IMAGE}
+
+ARG TERRAFORM_VERSION=1.11.4
+
+RUN dnf install -y jq \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf \
+    && arch="$(uname -m)" \
+    && case "${arch}" in \
+         x86_64) tf_arch="amd64" ;; \
+         aarch64) tf_arch="arm64" ;; \
+         *) echo "Unsupported architecture: ${arch}" >&2; exit 1 ;; \
+       esac \
+    && curl -fsSL "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_${tf_arch}.zip" \
+         -o /tmp/terraform.zip \
+    && unzip -q /tmp/terraform.zip -d /usr/local/bin \
+    && rm -f /tmp/terraform.zip \
+    && chmod +x /usr/local/bin/terraform
+
+ENV TF_DATA_DIR=/tmp/.terraform \
+    CHECKPOINT_DISABLE=1 \
+    WORKER_RUNTIME=infra
+
+CMD ["worker.lambda_handler.lambda_handler"]

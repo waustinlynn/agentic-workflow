@@ -8,12 +8,13 @@ import hmac
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
-from ingest.handler import IngestService
+from ingest.handler import IngestService, _parse_runtime_queue_urls
 from ingest.registry import DynamoDBRepoRegistry, RepoRegistryEntry
+from ingest.router import resolve_runtime_queue_key
 from ingest.security import verify_github_signature
 from shared.github_client import BootstrapLabelsResult
 from shared.models import ExecutionTarget, RuntimeKind, TaskEnvelope, TaskType
@@ -550,3 +551,185 @@ class TestDynamoDBRepoRegistry:
         assert entry.runtime is RuntimeKind.PYTHON
         assert entry.enabled is True
         assert registry.get_repo("waustinlynn/missing") is None
+
+
+class TestPhase2RuntimeQueueRouting:
+    RUNTIME_QUEUES: ClassVar[dict[str, str]] = {
+        "base": "https://sqs.us-east-1.amazonaws.com/123456789012/worker-base.fifo",
+        "python": "https://sqs.us-east-1.amazonaws.com/123456789012/worker-python.fifo",
+        "node": "https://sqs.us-east-1.amazonaws.com/123456789012/worker-node.fifo",
+        "infra": "https://sqs.us-east-1.amazonaws.com/123456789012/worker-infra.fifo",
+    }
+
+    @pytest.mark.parametrize(
+        ("target", "runtime", "task_type", "expected_key"),
+        [
+            (ExecutionTarget.LOCAL, RuntimeKind.PYTHON, TaskType.CODE_AND_TEST, None),
+            (ExecutionTarget.LOCAL, RuntimeKind.NODE, TaskType.REVIEW, None),
+            (ExecutionTarget.LAMBDA, RuntimeKind.NODE, TaskType.REVIEW, "base"),
+            (ExecutionTarget.LAMBDA, RuntimeKind.PYTHON, TaskType.PLAN, "base"),
+            (ExecutionTarget.LAMBDA, RuntimeKind.BASE, TaskType.CODE_AND_TEST, "base"),
+            (ExecutionTarget.LAMBDA, RuntimeKind.CI_VERIFIED, TaskType.CODE_AND_TEST, "base"),
+            (ExecutionTarget.LAMBDA, RuntimeKind.CI_VERIFIED, TaskType.FIX_CI, "base"),
+            (ExecutionTarget.LAMBDA, RuntimeKind.PYTHON, TaskType.CODE_AND_TEST, "python"),
+            (ExecutionTarget.LAMBDA, RuntimeKind.NODE, TaskType.ADDRESS_REVIEW, "node"),
+            (ExecutionTarget.LAMBDA, RuntimeKind.INFRA, TaskType.FIX_CI, "infra"),
+            (ExecutionTarget.LAMBDA, RuntimeKind.RUST, TaskType.CODE_AND_TEST, "rust"),
+        ],
+    )
+    def test_resolve_runtime_queue_key(
+        self,
+        target: ExecutionTarget,
+        runtime: RuntimeKind,
+        task_type: TaskType,
+        expected_key: str | None,
+    ) -> None:
+        task = TaskEnvelope(
+            task_type=task_type,
+            repo_full_name="waustinlynn/demo",
+            issue_or_pr_number=1,
+            delivery_id="d-1",
+            actor="waustinlynn",
+            execution_target=target,
+            runtime=runtime,
+        )
+        assert resolve_runtime_queue_key(task) == expected_key
+
+    def test_ingest_dispatches_to_runtime_specific_and_base_fifo_queues(self) -> None:
+        registry = _FakeRepoRegistry(
+            {
+                "waustinlynn/local-py": RepoRegistryEntry(
+                    repo_full_name="waustinlynn/local-py",
+                    message_group_id="repo-local-py",
+                    execution_target=ExecutionTarget.LOCAL,
+                    runtime=RuntimeKind.PYTHON,
+                ),
+                "waustinlynn/lambda-node": RepoRegistryEntry(
+                    repo_full_name="waustinlynn/lambda-node",
+                    message_group_id="repo-lambda-node",
+                    execution_target=ExecutionTarget.LAMBDA,
+                    runtime=RuntimeKind.NODE,
+                ),
+                "waustinlynn/lambda-civerified": RepoRegistryEntry(
+                    repo_full_name="waustinlynn/lambda-civerified",
+                    message_group_id="repo-lambda-ci",
+                    execution_target=ExecutionTarget.LAMBDA,
+                    runtime=RuntimeKind.CI_VERIFIED,
+                ),
+                "waustinlynn/lambda-rust": RepoRegistryEntry(
+                    repo_full_name="waustinlynn/lambda-rust",
+                    message_group_id="repo-lambda-rust",
+                    execution_target=ExecutionTarget.LAMBDA,
+                    runtime=RuntimeKind.RUST,
+                ),
+            }
+        )
+        sqs = _FakeSQSClient()
+        service = IngestService(
+            webhook_secret_provider=lambda: WEBHOOK_SECRET,
+            registry=registry,
+            sqs_client=sqs,
+            sqs_queue_url=QUEUE_URL,
+            runtime_queue_urls=self.RUNTIME_QUEUES,
+            allowed_actors=ALLOWED_ACTORS,
+        )
+
+        # 1. Local target stays on primary local queue.
+        ev_local = _make_apigw_event(
+            event_name="issues",
+            delivery_id="d-local",
+            payload={
+                "action": "labeled",
+                "repository": {"full_name": "waustinlynn/local-py"},
+                "sender": {"login": "waustinlynn"},
+                "label": {"name": "agent:ready"},
+                "issue": {"number": 1, "title": "Local work", "labels": []},
+            },
+        )
+        resp_local = service.handle_event(ev_local)
+        assert json.loads(resp_local["body"])["queue_route"] == "local"
+        assert sqs.messages[-1].queue_url == QUEUE_URL
+
+        # 2. Lambda node coding -> worker-node.fifo
+        ev_node_code = _make_apigw_event(
+            event_name="issues",
+            delivery_id="d-node-code",
+            payload={
+                "action": "labeled",
+                "repository": {"full_name": "waustinlynn/lambda-node"},
+                "sender": {"login": "waustinlynn"},
+                "label": {"name": "agent:ready"},
+                "issue": {"number": 2, "title": "Node work", "labels": []},
+            },
+        )
+        resp_node = service.handle_event(ev_node_code)
+        assert json.loads(resp_node["body"])["queue_route"] == "lambda:node"
+        assert sqs.messages[-1].queue_url == self.RUNTIME_QUEUES["node"]
+
+        # 3. Lambda node review -> worker-base.fifo (read-only lightweight image)
+        ev_node_review = _make_apigw_event(
+            event_name="check_suite",
+            delivery_id="d-node-review",
+            payload={
+                "action": "completed",
+                "repository": {"full_name": "waustinlynn/lambda-node"},
+                "sender": {"login": "agentic-coder[bot]"},
+                "check_suite": {
+                    "id": 900,
+                    "conclusion": "success",
+                    "head_branch": "agent/issue-2",
+                    "head_sha": "abc",
+                    "pull_requests": [
+                        {
+                            "number": 10,
+                            "head": {"ref": "agent/issue-2", "repo": {"id": 1}},
+                            "base": {"ref": "main", "repo": {"id": 1}},
+                        }
+                    ],
+                },
+            },
+        )
+        resp_rev = service.handle_event(ev_node_review)
+        assert json.loads(resp_rev["body"])["queue_route"] == "lambda:base"
+        assert sqs.messages[-1].queue_url == self.RUNTIME_QUEUES["base"]
+
+        # 4. Lambda ci-verified -> worker-base.fifo
+        ev_ci_verified = _make_apigw_event(
+            event_name="issues",
+            delivery_id="d-ci-verified",
+            payload={
+                "action": "labeled",
+                "repository": {"full_name": "waustinlynn/lambda-civerified"},
+                "sender": {"login": "waustinlynn"},
+                "label": {"name": "agent:ready"},
+                "issue": {"number": 3, "title": "Mobile task", "labels": []},
+            },
+        )
+        resp_ci = service.handle_event(ev_ci_verified)
+        assert json.loads(resp_ci["body"])["queue_route"] == "lambda:base"
+        assert sqs.messages[-1].queue_url == self.RUNTIME_QUEUES["base"]
+
+        # 5. Unprovisioned stack runtime (rust) gracefully falls back to worker-base.fifo
+        ev_rust = _make_apigw_event(
+            event_name="issues",
+            delivery_id="d-rust",
+            payload={
+                "action": "labeled",
+                "repository": {"full_name": "waustinlynn/lambda-rust"},
+                "sender": {"login": "waustinlynn"},
+                "label": {"name": "agent:ready"},
+                "issue": {"number": 4, "title": "Rust task", "labels": []},
+            },
+        )
+        resp_rust = service.handle_event(ev_rust)
+        assert json.loads(resp_rust["body"])["queue_route"] == "lambda:base"
+        assert sqs.messages[-1].queue_url == self.RUNTIME_QUEUES["base"]
+
+    def test_parse_runtime_queue_urls(self) -> None:
+        assert _parse_runtime_queue_urls("") == {}
+        assert _parse_runtime_queue_urls('{"BASE": "https://q1", "python": "https://q2"}') == {
+            "base": "https://q1",
+            "python": "https://q2",
+        }
+        with pytest.raises(ValueError, match="JSON object"):
+            _parse_runtime_queue_urls('["not-a-dict"]')

@@ -86,3 +86,121 @@ variable "initial_repos" {
     error_message = "Each initial_repos key must be 'owner/repo' with valid execution_target and runtime."
   }
 }
+
+variable "enable_worker_ecr_repos" {
+  description = "Provision ECR repositories for Phase 2 Lambda worker container images ($0 idle cost when empty)."
+  type        = bool
+  default     = true
+}
+
+variable "enable_lambda_workers" {
+  description = "Provision Phase 2 per-runtime SQS FIFO queues, Lambda container functions, and Event Source Mappings (enable after pushing images to ECR)."
+  type        = bool
+  default     = false
+}
+
+variable "lambda_worker_runtimes" {
+  description = "Stack runtime profiles provisioned as Phase 2 Lambda container images (must include 'base')."
+  type        = list(string)
+  default     = ["base", "python", "node", "infra"]
+
+  validation {
+    condition = (
+      contains(var.lambda_worker_runtimes, "base") &&
+      alltrue([
+        for rt in var.lambda_worker_runtimes :
+        contains(["base", "python", "node", "infra", "dotnet", "rust", "go"], rt)
+      ])
+    )
+    error_message = "lambda_worker_runtimes must include 'base' and only supported stack runtime names."
+  }
+}
+
+variable "lambda_worker_image_tag" {
+  description = "Default ECR image tag used for Phase 2 Lambda container workers when not overridden in lambda_worker_image_uris."
+  type        = string
+  default     = "latest"
+}
+
+variable "lambda_worker_image_uris" {
+  description = "Optional per-runtime image URI overrides (e.g., pinned immutable @sha256 digests)."
+  type        = map(string)
+  default     = {}
+}
+
+variable "lambda_worker_architecture" {
+  description = "CPU architecture for Phase 2 Lambda container workers (must match pushed Docker images)."
+  type        = string
+  default     = "arm64"
+
+  validation {
+    condition     = contains(["arm64", "x86_64"], var.lambda_worker_architecture)
+    error_message = "lambda_worker_architecture must be 'arm64' or 'x86_64'."
+  }
+}
+
+variable "lambda_worker_timeout_seconds" {
+  description = "Hard AWS Lambda timeout for Phase 2 worker functions (max 900s = 15 minutes)."
+  type        = number
+  default     = 900
+
+  validation {
+    condition     = var.lambda_worker_timeout_seconds >= 60 && var.lambda_worker_timeout_seconds <= 900
+    error_message = "lambda_worker_timeout_seconds must be between 60 and 900."
+  }
+}
+
+variable "lambda_worker_soft_timeout_buffer_seconds" {
+  description = "Soft-timeout safety buffer before Lambda hard timeout so workers cleanly label agent:needs-human."
+  type        = number
+  default     = 120
+
+  validation {
+    condition     = var.lambda_worker_soft_timeout_buffer_seconds >= 30 && var.lambda_worker_soft_timeout_buffer_seconds <= 300
+    error_message = "lambda_worker_soft_timeout_buffer_seconds must be between 30 and 300."
+  }
+}
+
+variable "lambda_worker_memory_mb" {
+  description = "Memory allocation (MB) for Phase 2 Lambda container workers."
+  type        = number
+  default     = 3008
+
+  validation {
+    condition     = var.lambda_worker_memory_mb >= 512 && var.lambda_worker_memory_mb <= 10240
+    error_message = "lambda_worker_memory_mb must be between 512 and 10240."
+  }
+}
+
+variable "lambda_worker_ephemeral_storage_mb" {
+  description = "Writable /tmp ephemeral storage (MB) for git checkouts and build caches."
+  type        = number
+  default     = 2048
+
+  validation {
+    condition     = var.lambda_worker_ephemeral_storage_mb >= 512 && var.lambda_worker_ephemeral_storage_mb <= 10240
+    error_message = "lambda_worker_ephemeral_storage_mb must be between 512 and 10240."
+  }
+}
+
+variable "lambda_worker_max_concurrency" {
+  description = "Maximum concurrent Lambda invocations per runtime SQS FIFO Event Source Mapping (AWS minimum is 2)."
+  type        = number
+  default     = 5
+
+  validation {
+    condition     = var.lambda_worker_max_concurrency >= 2 && var.lambda_worker_max_concurrency <= 100
+    error_message = "lambda_worker_max_concurrency must be between 2 and 100."
+  }
+}
+
+variable "lambda_worker_agent_backend" {
+  description = "Antigravity backend inside Phase 2 Lambda containers ('sdk' or 'agy_cli')."
+  type        = string
+  default     = "sdk"
+
+  validation {
+    condition     = contains(["sdk", "agy_cli"], var.lambda_worker_agent_backend)
+    error_message = "lambda_worker_agent_backend must be 'sdk' or 'agy_cli'."
+  }
+}

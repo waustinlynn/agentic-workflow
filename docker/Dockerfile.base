@@ -1,0 +1,57 @@
+# Phase 2 worker-base AWS Lambda container image.
+# Runs Review, Plan, and CI-verified coding/fix tasks for any language without local hardware.
+FROM public.ecr.aws/lambda/python:3.12
+
+ARG ANTIGRAVITY_SDK_PACKAGE=""
+ARG AGY_BINARY_URL=""
+
+RUN dnf install -y \
+        git \
+        ca-certificates \
+        curl-minimal \
+        tar \
+        gzip \
+        unzip \
+        xz \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf
+
+WORKDIR /build
+COPY pyproject.toml README.md ./
+COPY src/ ./src/
+
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir . \
+    && if [ -n "${ANTIGRAVITY_SDK_PACKAGE}" ]; then \
+         pip install --no-cache-dir "${ANTIGRAVITY_SDK_PACKAGE}"; \
+       fi \
+    && if [ -n "${AGY_BINARY_URL}" ]; then \
+         curl -fsSL "${AGY_BINARY_URL}" -o /usr/local/bin/agy && chmod +x /usr/local/bin/agy; \
+       fi \
+    && rm -rf /build
+
+COPY prompts/ ${LAMBDA_TASK_ROOT}/prompts/
+
+# AWS Lambda mounts rootfs read-only; direct all caches, HOME, and git workspaces to /tmp.
+ENV HOME=/tmp \
+    XDG_CACHE_HOME=/tmp/.cache \
+    XDG_CONFIG_HOME=/tmp/.config \
+    XDG_DATA_HOME=/tmp/.local/share \
+    AGENTIC_WORKSPACE_DIR=/tmp/agentic-workspaces \
+    AGENTIC_PROMPTS_DIR=/var/task/prompts \
+    PIP_CACHE_DIR=/tmp/.cache/pip \
+    UV_CACHE_DIR=/tmp/.cache/uv \
+    NPM_CONFIG_CACHE=/tmp/.cache/npm \
+    DOTNET_CLI_HOME=/tmp/.dotnet \
+    NUGET_PACKAGES=/tmp/.nuget/packages \
+    CARGO_HOME=/tmp/.cargo \
+    RUSTUP_HOME=/tmp/.rustup \
+    GOPATH=/tmp/go \
+    GOCACHE=/tmp/.cache/go-build \
+    TF_DATA_DIR=/tmp/.terraform \
+    GIT_CONFIG_NOSYSTEM=1 \
+    LOG_FORMAT=json \
+    WORKER_RUNTIME=base
+
+WORKDIR ${LAMBDA_TASK_ROOT}
+CMD ["worker.lambda_handler.lambda_handler"]
