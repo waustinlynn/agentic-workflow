@@ -40,6 +40,7 @@ Open **GitHub Settings → Developer settings → GitHub Apps → New GitHub App
 | Permission | Access |
 |---|---|
 | **Actions** | Read-only |
+| **Administration** | Read-only (lets `agentic onboard` verify auto-merge and branch protection) |
 | **Checks** | Read-only |
 | **Contents** | Read and write |
 | **Issues** | Read and write |
@@ -80,7 +81,7 @@ Open **New GitHub App** (`https://github.com/settings/apps/new`) again.
 | Permission | Access |
 |---|---|
 | **Checks** | Read-only |
-| **Contents** | Read-only |
+| **Contents** | Read and write *(required by GitHub for the App's `APPROVE` review to count toward branch protection's required approvals; the Review Agent runs strictly in `read_only=True` mode and never commits/pushes)* |
 | **Issues** | Read-only |
 | **Metadata** | Read-only (mandatory) |
 | **Pull requests** | Read and write |
