@@ -18,6 +18,7 @@ from shared.models import (
     RepoConfig,
     ReviewResult,
     TaskType,
+    TriageResult,
 )
 
 DEFAULT_PROMPTS_DIR = Path(__file__).resolve().parents[2] / "prompts"
@@ -40,6 +41,7 @@ def resolve_default_prompts_dir() -> Path:
 
 
 TASK_TEMPLATE_FILENAMES: dict[TaskType, str] = {
+    TaskType.TRIAGE: "triage.md",
     TaskType.PLAN: "plan.md",
     TaskType.CODE_AND_TEST: "code_and_test.md",
     TaskType.REVIEW: "review.md",
@@ -48,6 +50,7 @@ TASK_TEMPLATE_FILENAMES: dict[TaskType, str] = {
 }
 
 TASK_SCHEMA_FILENAMES: dict[TaskType, str] = {
+    TaskType.TRIAGE: "triage_result.schema.json",
     TaskType.PLAN: "plan_result.schema.json",
     TaskType.CODE_AND_TEST: "code_task_result.schema.json",
     TaskType.REVIEW: "review_result.schema.json",
@@ -56,6 +59,7 @@ TASK_SCHEMA_FILENAMES: dict[TaskType, str] = {
 }
 
 TASK_RESULT_MODELS: dict[TaskType, type[BaseModel]] = {
+    TaskType.TRIAGE: TriageResult,
     TaskType.PLAN: PlanResult,
     TaskType.CODE_AND_TEST: CodeTaskResult,
     TaskType.REVIEW: ReviewResult,

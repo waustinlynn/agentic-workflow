@@ -21,6 +21,8 @@ from shared.models import (
     RunStatus,
     TaskEnvelope,
     TaskType,
+    TriageResult,
+    TriageVerdict,
 )
 from worker.agent_backend import AgentBackend
 from worker.prompts import PromptAssembler, PromptContext
@@ -606,6 +608,153 @@ def _handle_fix_ci(
         )
 
 
+def _format_triage_comment(
+    triage: TriageResult,
+    *,
+    heading: str,
+) -> str:
+    lines: list[str] = [
+        f"### {heading}",
+        "",
+        triage.summary,
+        "",
+        f"**Rationale:** {triage.rationale}",
+    ]
+    if triage.affected_paths:
+        lines.extend(
+            [
+                "",
+                "#### Relevant Files",
+                *(f"- `{path}`" for path in triage.affected_paths),
+            ]
+        )
+    if triage.estimated_minutes is not None:
+        lines.extend(["", f"*Estimated effort: ~{triage.estimated_minutes} min*"])
+    if triage.missing_details:
+        lines.extend(
+            [
+                "",
+                "#### Needed Before Proceeding",
+                *(f"- {detail}" for detail in triage.missing_details),
+            ]
+        )
+    return "\n".join(lines)
+
+
+def _handle_triage(
+    envelope: TaskEnvelope,
+    ctx: WorkerContext,
+    state: RunState,
+) -> TaskOutcome:
+    repo = envelope.repo_full_name
+    issue_num = envelope.issue_or_pr_number
+    coder = ctx.github_clients.coder
+
+    coder.swap_agent_labels(
+        repo,
+        issue_num,
+        add=[AgentLabel.IN_PROGRESS],
+        clear_other_agent_labels=True,
+    )
+    state.attempt_count += 1
+    _save_state(ctx.state_store, state, status=RunStatus.TRIAGING, delivery_id=envelope.delivery_id)
+
+    issue = coder.get_issue(repo, issue_num)
+    comments = _format_comments(coder.list_issue_comments(repo, issue_num))
+    token = coder.auth.get_installation_token(repo) if ctx.clone_url_override is None else None
+
+    with ctx.workspace_manager.checkout(
+        repo,
+        branch="main",
+        token=token,
+        clone_url=ctx.clone_url_override,
+    ) as ws:
+        cfg = ws.repo_config
+        prompt = ctx.prompt_assembler.render(
+            PromptContext(
+                task_type=TaskType.TRIAGE,
+                repo_full_name=repo,
+                issue_or_pr_number=issue_num,
+                repo_config=cfg,
+                repo_root=ws.repo_dir,
+                issue_title=str(issue.get("title") or ""),
+                issue_body=str(issue.get("body") or ""),
+                comments=comments,
+            )
+        )
+        turn = ctx.agent_backend.run_turn(
+            prompt,
+            ws.repo_dir,
+            schema=ctx.prompt_assembler.get_schema_path(TaskType.TRIAGE),
+            conversation_id=state.conversation_id,
+            timeout=ctx.step_timeout(cfg.execution.timeout_minutes, step_name="triage agent turn"),
+            read_only=True,
+        )
+        if turn.structured_output is None:
+            raise ValueError("Triage agent did not return structured TriageResult JSON")
+        triage = TriageResult.model_validate(turn.structured_output)
+
+    if triage.verdict is TriageVerdict.NEEDS_HUMAN:
+        comment_body = _format_triage_comment(
+            triage,
+            heading="Triage Result: Not Actionable (`agent:needs-human`)",
+        )
+        coder.post_comment(repo, issue_num, comment_body)
+        coder.swap_agent_labels(
+            repo,
+            issue_num,
+            add=[AgentLabel.NEEDS_HUMAN],
+            clear_other_agent_labels=True,
+        )
+        _save_state(
+            ctx.state_store,
+            state,
+            status=RunStatus.NEEDS_HUMAN,
+            delivery_id=envelope.delivery_id,
+            conversation_id=turn.conversation_id,
+            last_error=triage.rationale[:1000],
+        )
+        return TaskOutcome(
+            status="needs_human",
+            task_type=TaskType.TRIAGE,
+            repo_full_name=repo,
+            issue_or_pr_number=issue_num,
+            summary=triage.summary,
+            conversation_id=turn.conversation_id,
+        )
+
+    if triage.verdict is TriageVerdict.READY:
+        target_label = AgentLabel.READY
+        heading = "Triage Result: Ready for Implementation (`agent:ready`)"
+    else:
+        target_label = AgentLabel.PLAN
+        heading = "Triage Result: Needs Implementation Plan (`agent:plan`)"
+
+    # Post triage context before swapping labels so downstream coder/planner sees it immediately.
+    coder.post_comment(repo, issue_num, _format_triage_comment(triage, heading=heading))
+    coder.swap_agent_labels(
+        repo,
+        issue_num,
+        add=[target_label],
+        clear_other_agent_labels=True,
+    )
+    _save_state(
+        ctx.state_store,
+        state,
+        status=RunStatus.QUEUED,
+        delivery_id=envelope.delivery_id,
+        conversation_id=turn.conversation_id,
+    )
+    return TaskOutcome(
+        status="completed",
+        task_type=TaskType.TRIAGE,
+        repo_full_name=repo,
+        issue_or_pr_number=issue_num,
+        summary=triage.summary,
+        conversation_id=turn.conversation_id,
+    )
+
+
 def _handle_plan(
     envelope: TaskEnvelope,
     ctx: WorkerContext,
@@ -767,6 +916,8 @@ def handle_task(envelope: TaskEnvelope, ctx: WorkerContext) -> TaskOutcome:
             return _handle_fix_ci(envelope, ctx, state)
         if envelope.task_type is TaskType.PLAN:
             return _handle_plan(envelope, ctx, state)
+        if envelope.task_type is TaskType.TRIAGE:
+            return _handle_triage(envelope, ctx, state)
 
         raise ValueError(f"Unsupported task_type: {envelope.task_type!r}")
     except Exception as exc:

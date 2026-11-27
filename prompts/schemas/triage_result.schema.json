@@ -1,0 +1,66 @@
+{
+  "$defs": {
+    "TriageVerdict": {
+      "description": "Routing decision produced by the Triage Agent for an issue.",
+      "enum": [
+        "ready",
+        "plan",
+        "needs_human"
+      ],
+      "title": "TriageVerdict",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Structured JSON output produced by the ``triage`` prompt.",
+  "properties": {
+    "verdict": {
+      "$ref": "#/$defs/TriageVerdict"
+    },
+    "summary": {
+      "minLength": 1,
+      "title": "Summary",
+      "type": "string"
+    },
+    "rationale": {
+      "minLength": 1,
+      "title": "Rationale",
+      "type": "string"
+    },
+    "missing_details": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Missing Details",
+      "type": "array"
+    },
+    "affected_paths": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Affected Paths",
+      "type": "array"
+    },
+    "estimated_minutes": {
+      "anyOf": [
+        {
+          "maximum": 240,
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Estimated Minutes"
+    }
+  },
+  "required": [
+    "verdict",
+    "summary",
+    "rationale"
+  ],
+  "title": "TriageResult",
+  "type": "object"
+}

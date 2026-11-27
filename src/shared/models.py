@@ -52,6 +52,7 @@ def _validate_git_branch(value: str | None) -> str | None:
 class TaskType(StrEnum):
     """Supported task kinds dispatched over SQS FIFO."""
 
+    TRIAGE = "triage"
     PLAN = "plan"
     CODE_AND_TEST = "code_and_test"
     REVIEW = "review"
@@ -111,6 +112,7 @@ class RunStatus(StrEnum):
     """Lifecycle status tracked per (repo, issue_or_pr) in DynamoDB."""
 
     QUEUED = "queued"
+    TRIAGING = "triaging"
     PLANNING = "planning"
     CODING = "coding"
     IN_REVIEW = "in_review"
@@ -120,6 +122,14 @@ class RunStatus(StrEnum):
     NEEDS_HUMAN = "needs_human"
     PAUSED = "paused"
     FAILED = "failed"
+
+
+class TriageVerdict(StrEnum):
+    """Routing decision produced by the Triage Agent for an issue."""
+
+    READY = "ready"
+    PLAN = "plan"
+    NEEDS_HUMAN = "needs_human"
 
 
 class ReviewVerdict(StrEnum):
@@ -471,6 +481,38 @@ class PlanResult(BaseModel):
     summary: str = Field(min_length=1)
     sub_issues: list[PlanSubIssue] = Field(min_length=1)
     open_questions: list[str] = Field(default_factory=list)
+
+
+class TriageResult(BaseModel):
+    """Structured JSON output produced by the ``triage`` prompt."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    verdict: TriageVerdict
+    summary: str = Field(min_length=1)
+    rationale: str = Field(min_length=1)
+    missing_details: list[str] = Field(default_factory=list)
+    affected_paths: list[str] = Field(default_factory=list)
+    estimated_minutes: int | None = Field(default=None, ge=1, le=240)
+
+    @field_validator("summary", "rationale")
+    @classmethod
+    def validate_non_blank_text(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("field must not be blank")
+        return cleaned
+
+    @field_validator("missing_details", "affected_paths")
+    @classmethod
+    def validate_non_blank_items(cls, items: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        for item in items:
+            stripped = item.strip()
+            if not stripped:
+                raise ValueError("list items must not be blank")
+            cleaned.append(stripped)
+        return cleaned
 
 
 class CodeTaskResult(BaseModel):

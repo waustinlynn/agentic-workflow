@@ -315,6 +315,7 @@ class TestEventRoutingAndFifoGrouping:
     @pytest.mark.parametrize(
         ("label_name", "expected_task"),
         [
+            ("agent:triage", TaskType.TRIAGE),
             ("agent:plan", TaskType.PLAN),
             ("agent:ready", TaskType.CODE_AND_TEST),
         ],
@@ -568,6 +569,7 @@ class TestPhase2RuntimeQueueRouting:
             (ExecutionTarget.LOCAL, RuntimeKind.NODE, TaskType.REVIEW, None),
             (ExecutionTarget.LAMBDA, RuntimeKind.NODE, TaskType.REVIEW, "base"),
             (ExecutionTarget.LAMBDA, RuntimeKind.PYTHON, TaskType.PLAN, "base"),
+            (ExecutionTarget.LAMBDA, RuntimeKind.PYTHON, TaskType.TRIAGE, "base"),
             (ExecutionTarget.LAMBDA, RuntimeKind.BASE, TaskType.CODE_AND_TEST, "base"),
             (ExecutionTarget.LAMBDA, RuntimeKind.CI_VERIFIED, TaskType.CODE_AND_TEST, "base"),
             (ExecutionTarget.LAMBDA, RuntimeKind.CI_VERIFIED, TaskType.FIX_CI, "base"),

@@ -121,6 +121,7 @@ class _MockGitHubServer:
             10: [AgentLabel.READY.value],
             20: [AgentLabel.IN_REVIEW.value],
             30: [AgentLabel.PLAN.value],
+            40: [AgentLabel.TRIAGE.value],
         }
         self.pr_head_branch = "agent/issue-10"
         self.ci_conclusion = "success"
@@ -163,6 +164,10 @@ class _MockGitHubServer:
         if method == "GET" and path.endswith("/issues/30"):
             return httpx.Response(
                 200, json={"number": 30, "title": "Big feature", "body": "Break this down."}
+            )
+        if method == "GET" and path.endswith("/issues/40"):
+            return httpx.Response(
+                200, json={"number": 40, "title": "Triage me", "body": "Verify this issue."}
             )
         if method == "GET" and "/issues/" in path and path.endswith("/comments"):
             return httpx.Response(200, json=[])
@@ -600,3 +605,73 @@ class TestWorkerAndReviewerLifecycle:
         assert "ProtectedPathViolationError" in outcome.summary
         assert server.issue_labels[10] == [AgentLabel.NEEDS_HUMAN.value]
         assert server.created_prs == []
+
+    @pytest.mark.parametrize(
+        ("verdict", "expected_label", "expected_outcome_status", "expected_run_status"),
+        [
+            ("ready", AgentLabel.READY, "completed", RunStatus.QUEUED),
+            ("plan", AgentLabel.PLAN, "completed", RunStatus.QUEUED),
+            ("needs_human", AgentLabel.NEEDS_HUMAN, "needs_human", RunStatus.NEEDS_HUMAN),
+        ],
+    )
+    def test_triage_routes_issue_by_verdict(
+        self,
+        tmp_path: Path,
+        app_keys: dict[AppIdentity, GitHubAppCredentials],
+        verdict: str,
+        expected_label: AgentLabel,
+        expected_outcome_status: str,
+        expected_run_status: RunStatus,
+    ) -> None:
+        bare = _create_bare_repo(tmp_path)
+        server = _MockGitHubServer()
+        store = InMemoryRunStateStore()
+
+        payload: dict[str, Any] = {
+            "verdict": verdict,
+            "summary": f"Triaged as {verdict}.",
+            "rationale": f"Verified against app.py -> {verdict}.",
+            "affected_paths": ["app.py"],
+            "estimated_minutes": 6 if verdict != "needs_human" else None,
+            "missing_details": ["Provide stack trace"] if verdict == "needs_human" else [],
+        }
+        backend = _ScriptedBackend(
+            lambda _p, _d, _ro: AgentTurnResult(
+                text="triaged",
+                conversation_id=f"conv-triage-{verdict}",
+                structured_output=payload,
+            )
+        )
+        ctx = WorkerContext(
+            github_clients=_build_clients(app_keys, server),
+            agent_backend=backend,
+            prompt_assembler=PromptAssembler(),
+            workspace_manager=WorkspaceManager(base_dir=tmp_path / "ws"),
+            state_store=store,
+            clone_url_override=str(bare),
+        )
+
+        outcome = handle_task(
+            TaskEnvelope(
+                task_type=TaskType.TRIAGE,
+                repo_full_name="waustinlynn/demo",
+                issue_or_pr_number=40,
+                delivery_id=f"d-triage-{verdict}",
+                actor="waustinlynn",
+            ),
+            ctx,
+        )
+
+        assert outcome.status == expected_outcome_status
+        assert outcome.task_type is TaskType.TRIAGE
+        assert backend.calls[-1]["read_only"] is True
+        assert server.issue_labels[40] == [expected_label.value]
+        assert len(server.posted_comments) == 1
+        comment_issue, comment_body = server.posted_comments[0]
+        assert comment_issue == 40
+        assert f"Verified against app.py -> {verdict}." in comment_body
+        if verdict == "needs_human":
+            assert "Provide stack trace" in comment_body
+        saved = store.get("waustinlynn/demo", 40)
+        assert saved is not None
+        assert saved.status is expected_run_status

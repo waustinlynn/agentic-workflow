@@ -12,12 +12,13 @@ from shared.labels import AgentLabel
 from shared.models import ExecutionTarget, RuntimeKind, TaskEnvelope, TaskType
 
 _ISSUE_LABEL_TO_TASK: dict[str, TaskType] = {
+    AgentLabel.TRIAGE.value: TaskType.TRIAGE,
     AgentLabel.PLAN.value: TaskType.PLAN,
     AgentLabel.READY.value: TaskType.CODE_AND_TEST,
 }
 
 _FAILURE_CHECK_CONCLUSIONS = frozenset({"failure", "timed_out"})
-_BASE_ONLY_TASK_TYPES = frozenset({TaskType.REVIEW, TaskType.PLAN})
+_BASE_ONLY_TASK_TYPES = frozenset({TaskType.REVIEW, TaskType.PLAN, TaskType.TRIAGE})
 
 
 def resolve_runtime_queue_key(task: TaskEnvelope) -> str | None:
@@ -26,7 +27,7 @@ def resolve_runtime_queue_key(task: TaskEnvelope) -> str | None:
     Routing rules:
     - ``execution_target == "local"`` -> ``None`` (primary local FIFO queue)
     - ``execution_target == "lambda"``:
-      - ``review`` and ``plan`` tasks -> ``"base"`` (lightweight ``worker-base`` image)
+      - ``review``, ``plan``, and ``triage`` tasks -> ``"base"`` (lightweight ``worker-base`` image)
       - ``runtime`` in ``{"base", "ci-verified"}`` -> ``"base"``
       - Any stack runtime (``python``, ``node``, ``infra``, etc.) -> ``task.runtime.value``
     """

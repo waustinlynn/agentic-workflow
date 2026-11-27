@@ -11,6 +11,7 @@ AGENT_LABEL_PREFIX = "agent:"
 class AgentLabel(StrEnum):
     """State-machine labels managed by the agentic workflow."""
 
+    TRIAGE = "agent:triage"
     PLAN = "agent:plan"
     READY = "agent:ready"
     IN_PROGRESS = "agent:in-progress"
@@ -30,6 +31,11 @@ class LabelSpec:
 
 
 AGENT_LABEL_SPECS: tuple[LabelSpec, ...] = (
+    LabelSpec(
+        name=AgentLabel.TRIAGE,
+        color="008672",
+        description="Trigger agent to verify whether the issue is valid and actionable",
+    ),
     LabelSpec(
         name=AgentLabel.PLAN,
         color="1D76DB",

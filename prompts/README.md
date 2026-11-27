@@ -3,6 +3,7 @@
 Versioned prompt templates and Pydantic-aligned JSON schemas for every stage of `agentic-workflow`:
 
 - `base_rules.md` — Universal trust boundaries, protected-path rules, and engineering/testing standards.
+- `triage.md` + `schemas/triage_result.schema.json` — Read-only issue validity, actionability, and complexity triage (`TriageResult`).
 - `plan.md` + `schemas/plan_result.schema.json` — Read-only decomposition into atomic Lambda-sized sub-issues (`PlanResult`).
 - `code_and_test.md` + `schemas/code_task_result.schema.json` — Implementation, test-first bug fixes, and verification (`CodeTaskResult`).
 - `review.md` + `schemas/review_result.schema.json` — Independent Option A review under `agentic-reviewer[bot]` (`ReviewResult`).

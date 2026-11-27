@@ -29,6 +29,8 @@ from shared.models import (
     StackType,
     TaskEnvelope,
     TaskType,
+    TriageResult,
+    TriageVerdict,
 )
 
 
@@ -275,6 +277,44 @@ class TestLabels:
     def test_label_specs_cover_all_enum_values(self) -> None:
         spec_names = {spec.name.value for spec in AGENT_LABEL_SPECS}
         assert spec_names == ALL_AGENT_LABELS
+        assert AgentLabel.TRIAGE.value in ALL_AGENT_LABELS
         assert AgentLabel.READY.value in ALL_AGENT_LABELS
+        assert is_agent_label("agent:triage") is True
         assert is_agent_label("agent:ready") is True
         assert is_agent_label("bug") is False
+
+
+class TestTriageResult:
+    def test_valid_triage_verdicts(self) -> None:
+        ready = TriageResult(
+            verdict=TriageVerdict.READY,
+            summary="Clear bug in health endpoint.",
+            rationale="Confirmed missing 503 check in src/api/health.py.",
+            affected_paths=["src/api/health.py"],
+            estimated_minutes=5,
+        )
+        assert ready.verdict is TriageVerdict.READY
+        assert ready.missing_details == []
+
+        needs_human = TriageResult(
+            verdict=TriageVerdict.NEEDS_HUMAN,
+            summary="Cannot reproduce without error logs.",
+            rationale="Issue lacks stack trace and affected endpoint.",
+            missing_details=["Attach failing command output", "Specify target environment"],
+        )
+        assert needs_human.verdict is TriageVerdict.NEEDS_HUMAN
+        assert len(needs_human.missing_details) == 2
+
+    def test_rejects_blank_summary_or_rationale(self) -> None:
+        with pytest.raises(ValidationError, match="blank"):
+            TriageResult(
+                verdict=TriageVerdict.PLAN,
+                summary="   ",
+                rationale="Large refactor.",
+            )
+        with pytest.raises(ValidationError, match="blank"):
+            TriageResult(
+                verdict=TriageVerdict.NEEDS_HUMAN,
+                summary="Needs clarification",
+                rationale="   ",
+            )
