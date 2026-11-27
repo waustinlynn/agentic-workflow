@@ -1,0 +1,37 @@
+version: 1
+stack: backend
+
+git:
+  default_branch: main
+  branch_prefix: agent/
+  commit_style: conventional
+
+execution:
+  target: lambda
+  runtime: python
+  max_review_rounds: 3
+  timeout_minutes: 12
+  working_directory: .
+  setup_commands:
+    - uv sync --frozen --dev
+  verify_commands:
+    - uv run ruff check .
+    - uv run ruff format --check .
+    - uv run mypy src tests
+    - uv run pytest
+
+review:
+  wait_for_ci: true
+  auto_merge: true
+  merge_method: squash
+  extra_checklist:
+    - "Confirm local-to-Lambda portability (no local-only state or interactive OAuth)"
+    - "Verify external I/O (HTTP, AWS SDK, clocks, credentials) is injected for unit testing"
+    - "Verify strict Pydantic v2 validation and security checks (HMAC, allowlists, fork rejection, protected paths)"
+
+safety:
+  protected_paths:
+    - .github/workflows/**
+    - .agentic/**
+    - CODEOWNERS
+  allow_external_forks: false
