@@ -1,12 +1,20 @@
-# Phase 2 worker-base AWS Lambda container image.
-# Runs Review, Plan, and CI-verified coding/fix tasks for any language without local hardware.
+# Phase 2 worker-base AWS Lambda container image (default runtime).
+# Includes Python 3.12 + git + Antigravity runtime + full-stack Go/Node/Terraform toolchains
+# (Go 1.27 + gcc for -race + golangci-lint, Node.js 22 LTS + npm, Terraform 1.17 + jq, just).
 FROM public.ecr.aws/lambda/python:3.12
 
 ARG ANTIGRAVITY_SDK_PACKAGE=""
 ARG AGY_BINARY_URL=""
+ARG GO_VERSION=1.27.4
+ARG GOLANGCI_LINT_VERSION=2.15.0
+ARG NODE_VERSION=22.23.5
+ARG TERRAFORM_VERSION=1.17.2
+ARG JUST_VERSION=1.59.0
 
 RUN dnf install -y \
         git \
+        gcc \
+        jq \
         ca-certificates \
         curl-minimal \
         tar \
@@ -15,6 +23,42 @@ RUN dnf install -y \
         xz \
     && dnf clean all \
     && rm -rf /var/cache/dnf
+
+# Install Go, golangci-lint, Node.js 22 LTS, Terraform, and just (multi-arch: x86_64 & arm64).
+RUN arch="$(uname -m)" \
+    && case "${arch}" in \
+         x86_64)  go_arch="amd64"; node_arch="x64";   musl_arch="x86_64" ;; \
+         aarch64) go_arch="arm64"; node_arch="arm64"; musl_arch="aarch64" ;; \
+         *) echo "Unsupported architecture: ${arch}" >&2; exit 1 ;; \
+       esac \
+    # 1. Go
+    && curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${go_arch}.tar.gz" -o /tmp/go.tar.gz \
+    && tar -C /usr/local -xzf /tmp/go.tar.gz \
+    && rm -f /tmp/go.tar.gz \
+    # 2. golangci-lint
+    && curl -fsSL "https://github.com/golangci/golangci-lint/releases/download/v${GOLANGCI_LINT_VERSION}/golangci-lint-${GOLANGCI_LINT_VERSION}-linux-${go_arch}.tar.gz" \
+         -o /tmp/golangci-lint.tar.gz \
+    && tar -xzf /tmp/golangci-lint.tar.gz -C /tmp \
+    && mv "/tmp/golangci-lint-${GOLANGCI_LINT_VERSION}-linux-${go_arch}/golangci-lint" /usr/local/bin/golangci-lint \
+    && chmod +x /usr/local/bin/golangci-lint \
+    && rm -rf /tmp/golangci-lint.tar.gz "/tmp/golangci-lint-${GOLANGCI_LINT_VERSION}-linux-${go_arch}" \
+    # 3. Node.js 22 LTS
+    && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${node_arch}.tar.xz" \
+         -o /tmp/node.tar.xz \
+    && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 \
+    && rm -f /tmp/node.tar.xz \
+    # 4. Terraform
+    && curl -fsSL "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_${go_arch}.zip" \
+         -o /tmp/terraform.zip \
+    && unzip -q /tmp/terraform.zip -d /usr/local/bin \
+    && chmod +x /usr/local/bin/terraform \
+    && rm -f /tmp/terraform.zip \
+    # 5. just
+    && curl -fsSL "https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-${musl_arch}-unknown-linux-musl.tar.gz" \
+         -o /tmp/just.tar.gz \
+    && tar -xzf /tmp/just.tar.gz -C /usr/local/bin just \
+    && chmod +x /usr/local/bin/just \
+    && rm -f /tmp/just.tar.gz
 
 WORKDIR /build
 COPY pyproject.toml README.md ./
@@ -33,7 +77,8 @@ RUN pip install --no-cache-dir --upgrade pip \
 COPY prompts/ ${LAMBDA_TASK_ROOT}/prompts/
 
 # AWS Lambda mounts rootfs read-only; direct all caches, HOME, and git workspaces to /tmp.
-ENV HOME=/tmp \
+ENV PATH="/usr/local/go/bin:${PATH}" \
+    HOME=/tmp \
     XDG_CACHE_HOME=/tmp/.cache \
     XDG_CONFIG_HOME=/tmp/.config \
     XDG_DATA_HOME=/tmp/.local/share \
@@ -48,7 +93,10 @@ ENV HOME=/tmp \
     RUSTUP_HOME=/tmp/.rustup \
     GOPATH=/tmp/go \
     GOCACHE=/tmp/.cache/go-build \
+    GOMODCACHE=/tmp/go/pkg/mod \
+    GOLANGCI_LINT_CACHE=/tmp/.cache/golangci-lint \
     TF_DATA_DIR=/tmp/.terraform \
+    CHECKPOINT_DISABLE=1 \
     GIT_CONFIG_NOSYSTEM=1 \
     LOG_FORMAT=json \
     WORKER_RUNTIME=base

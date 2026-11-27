@@ -48,6 +48,8 @@ _TMP_CACHE_ENV_VARS: tuple[str, ...] = (
     "CARGO_HOME",
     "GOPATH",
     "GOCACHE",
+    "GOMODCACHE",
+    "GOLANGCI_LINT_CACHE",
     "TF_DATA_DIR",
     "TF_PLUGIN_CACHE_DIR",
 )
@@ -297,7 +299,7 @@ def _get_default_service() -> LambdaWorkerService:
         log_format=env.get("LOG_FORMAT", "json"),
         level=env.get("LOG_LEVEL", "INFO"),
     )
-    if env.get("WORKER_RUNTIME", "").strip().lower() == "infra":
+    if env.get("WORKER_RUNTIME", "").strip().lower() in {"base", "infra"}:
         env.setdefault("TF_PLUGIN_CACHE_DIR", "/tmp/.terraform.d/plugin-cache")
     ensure_tmp_cache_dirs(env)
 

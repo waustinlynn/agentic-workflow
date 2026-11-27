@@ -6,10 +6,10 @@ Layered AWS Lambda container images built from `public.ecr.aws/lambda/python:3.1
 
 | Image | Dockerfile | Purpose | Writable `/tmp` Caches |
 |---|---|---|---|
-| `worker-base` | `docker/Dockerfile.base` | `review`, `plan`, and `ci-verified` coding for any language | `HOME`, `XDG_*`, `AGENTIC_WORKSPACE_DIR=/tmp/agentic-workspaces` |
+| `worker-base` | `docker/Dockerfile.base` | Default runtime: `review`, `plan`, `ci-verified`, and full-stack Go (`1.27` + `gcc` + `golangci-lint`) + Node (`22 LTS` + `npm`) + Terraform (`1.17` + `jq`) + `just` | `HOME`, `XDG_*`, `AGENTIC_WORKSPACE_DIR`, `GOPATH`, `GOCACHE`, `GOMODCACHE`, `GOLANGCI_LINT_CACHE`, `NPM_CONFIG_CACHE`, `TF_DATA_DIR` |
 | `worker-python` | `docker/Dockerfile.python` | Python repos (`uv`, `ruff`, `mypy`, `pytest`) | `UV_CACHE_DIR`, `RUFF_CACHE_DIR`, `MYPY_CACHE_DIR`, `PYTEST_CACHE_DIR` |
-| `worker-node` | `docker/Dockerfile.node` | TypeScript/JS repos (Node 22 LTS, `npm`, `pnpm`) | `NPM_CONFIG_CACHE`, `YARN_CACHE_FOLDER`, `PNPM_STORE_DIR` |
-| `worker-infra` | `docker/Dockerfile.infra` | Terraform / IaC repos (`terraform`, `jq`) | `TF_DATA_DIR`, `TF_PLUGIN_CACHE_DIR` |
+| `worker-node` | `docker/Dockerfile.node` | TypeScript/JS repos (adds `pnpm` on top of Node 22 LTS) | `NPM_CONFIG_CACHE`, `YARN_CACHE_FOLDER`, `PNPM_STORE_DIR` |
+| `worker-infra` | `docker/Dockerfile.infra` | Terraform / IaC repos (inherits Terraform 1.17 + `jq`) | `TF_DATA_DIR`, `TF_PLUGIN_CACHE_DIR` |
 | `worker-dotnet` | `docker/Dockerfile.dotnet` | .NET repos (`dotnet` SDK 8.0) | `DOTNET_CLI_HOME`, `NUGET_PACKAGES` |
 | `worker-rust` | `docker/Dockerfile.rust` | Rust repos (`cargo`, `clippy`, `rustfmt`) | `CARGO_HOME`, `CARGO_TARGET_DIR` |
 
