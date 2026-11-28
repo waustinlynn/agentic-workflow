@@ -1,0 +1,6 @@
+# Copy to terraform.tfvars (gitignored).
+github_subjects = [
+  "repo:waustinlynn/agentic-workflow:ref:refs/heads/main",
+  "repo:waustinlynn/agentic-workflow:environment:production",
+  "repo:waustinlynn/monitor-grow:ref:refs/heads/main",
+]

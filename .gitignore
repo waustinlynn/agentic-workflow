@@ -29,6 +29,7 @@ tfplan
 *.tfvars
 !*.tfvars.example
 infra/backend.hcl
+infra-bootstrap-iam/backend.hcl
 infra/.build/
 crash.log
 override.tf
