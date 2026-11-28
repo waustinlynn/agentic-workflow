@@ -376,6 +376,7 @@ class AntigravitySdkBackend(AgentBackend):
         vertex: bool = False,
         model: str | None = None,
         app_data_dir: str | None = None,
+        auto_approve_permissions: bool = False,
         sdk_module: Any | None = None,
     ) -> None:
         self._api_key = api_key
@@ -384,6 +385,7 @@ class AntigravitySdkBackend(AgentBackend):
         self._app_data_dir = app_data_dir or os.environ.get(
             "ANTIGRAVITY_APP_DATA_DIR", "/tmp/.antigravity"
         )
+        self._auto_approve_permissions = auto_approve_permissions
         self._sdk_module = sdk_module
 
     def _load_sdk(self) -> Any:
@@ -451,6 +453,11 @@ class AntigravitySdkBackend(AgentBackend):
                 local_cfg_kwargs["conversation_id"] = resume_conversation_id
             if schema_dict is not None:
                 local_cfg_kwargs["response_schema"] = schema_dict
+
+            if not read_only and self._auto_approve_permissions:
+                policy = getattr(sdk, "policy", None)
+                if policy is not None and hasattr(policy, "allow"):
+                    local_cfg_kwargs["policies"] = [policy.allow("run_command")]
 
             capabilities = self._build_capabilities(sdk, read_only=read_only)
             if capabilities is not None:
@@ -561,10 +568,12 @@ def create_agent_backend(environ: Mapping[str, str] | None = None) -> AgentBacke
 
     if kind == "sdk":
         vertex = env.get("ANTIGRAVITY_VERTEX", "false").strip().lower() in {"1", "true", "yes"}
+        auto_approve = env.get("AGY_AUTO_APPROVE", "false").strip().lower() in {"1", "true", "yes"}
         return AntigravitySdkBackend(
             api_key=api_key,
             vertex=vertex,
             model=model,
+            auto_approve_permissions=auto_approve,
         )
 
     raise ValueError(f"Unsupported AGENT_BACKEND={kind!r}; expected 'agy_cli' or 'sdk'")
