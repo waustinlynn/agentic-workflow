@@ -48,7 +48,7 @@ data "aws_iam_policy_document" "plan" {
 
   statement {
     sid       = "IdentityAndLists"
-    actions   = ["sts:GetCallerIdentity", "logs:DescribeLogGroups", "lambda:ListEventSourceMappings", "lambda:GetEventSourceMapping", "iam:ListOpenIDConnectProviders"]
+    actions   = ["sts:GetCallerIdentity", "logs:DescribeLogGroups", "lambda:ListEventSourceMappings", "lambda:GetEventSourceMapping", "lambda:ListTags", "iam:ListOpenIDConnectProviders"]
     resources = ["*"]
   }
 

@@ -96,6 +96,7 @@ data "aws_iam_policy_document" "deploy" {
     actions = [
       "lambda:CreateEventSourceMapping", "lambda:UpdateEventSourceMapping", "lambda:DeleteEventSourceMapping",
       "lambda:GetEventSourceMapping", "lambda:ListEventSourceMappings",
+      "lambda:ListTags", "lambda:TagResource", "lambda:UntagResource",
     ]
     resources = ["*"]
   }
