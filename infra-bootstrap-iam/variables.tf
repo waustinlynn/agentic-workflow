@@ -63,3 +63,20 @@ variable "max_session_duration" {
   type        = number
   default     = 3600
 }
+
+variable "plan_role_name" {
+  description = "Name of the read-only role assumed by pull_request workflows to run `terraform plan`."
+  type        = string
+  default     = "github-actions-plan"
+}
+
+variable "github_plan_subjects" {
+  description = "OIDC `sub` patterns allowed to assume the read-only plan role (e.g. \"repo:waustinlynn/agentic-workflow:pull_request\")."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for s in var.github_plan_subjects : startswith(s, "repo:waustinlynn/")])
+    error_message = "Every github_plan_subjects entry must start with \"repo:waustinlynn/\"."
+  }
+}

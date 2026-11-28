@@ -56,6 +56,14 @@ State lives in its own bucket: `agentic-iam-deploy-tfstate-367553824651-us-east-
    ```
 7. **Verify** with a throwaway workflow that runs `aws sts get-caller-identity`; the ARN should be `assumed-role/github-actions-deploy/...`.
 
+## Read-only plan role (terraform plan on PRs)
+
+`pull_request` workflows run PR-controlled code, so they must not use the deploy role. Setting `github_plan_subjects` (e.g. `repo:waustinlynn/agentic-workflow:pull_request`) creates a second role, `github-actions-plan`, with describe/list/get only on name-prefixed resources (no secret values, no writes). Fork PRs never receive OIDC tokens. After applying:
+
+```bash
+gh variable set AWS_PLAN_ROLE_ARN --repo waustinlynn/agentic-workflow --body "$(terraform output -raw plan_role_arn)"
+```
+
 ## Adding another repo
 
 Append its subjects to `github_subjects`, add its name prefix to `resource_name_prefixes` (and its state bucket to `state_bucket_arns`), then `terraform apply`. Attach repo-specific permissions via `additional_policy_arns`.

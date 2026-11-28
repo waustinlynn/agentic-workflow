@@ -4,3 +4,8 @@ github_subjects = [
   "repo:waustinlynn/agentic-workflow:environment:production",
   "repo:waustinlynn/monitor-grow:ref:refs/heads/main",
 ]
+
+# Read-only plan role for pull_request workflows (terraform plan on PRs).
+github_plan_subjects = [
+  "repo:waustinlynn/agentic-workflow:pull_request",
+]
