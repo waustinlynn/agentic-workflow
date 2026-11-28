@@ -472,6 +472,61 @@ class TestAntigravitySdkBackend:
             )
         assert attempts == 1
 
+    def test_configures_auto_approve_policy_when_not_read_only(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        recorded: dict[str, Any] = {}
+
+        class _FakePolicy:
+            def allow(self, permission: str) -> str:
+                return f"allow:{permission}"
+
+        class _FakeAgent:
+            def __init__(self, config: Any) -> None:
+                recorded["config"] = config
+                self.conversation_id = "sdk-conv-123"
+
+            async def __aenter__(self) -> _FakeAgent:
+                return self
+
+            async def __aexit__(self, *_exc: Any) -> None:
+                return None
+
+            async def chat(self, _prompt: str) -> _FakeChatResponse:
+                return _FakeChatResponse(text_val="ok")
+
+        fake_sdk = SimpleNamespace(
+            Agent=_FakeAgent,
+            LocalAgentConfig=lambda **kw: SimpleNamespace(**kw),
+            policy=_FakePolicy(),
+        )
+
+        backend = AntigravitySdkBackend(
+            app_data_dir=str(tmp_path / "app-data"),
+            auto_approve_permissions=True,
+            sdk_module=fake_sdk,
+        )
+
+        # 1. read_only=False -> should have policy
+        backend.run_turn("hello", tmp_path, read_only=False)
+        assert getattr(recorded["config"], "policies", None) == ["allow:run_command"]
+
+        # 2. read_only=True -> should NOT have policy (remains plan-only)
+        recorded.clear()
+        backend.run_turn("hello", tmp_path, read_only=True)
+        assert not hasattr(recorded["config"], "policies")
+
+        # 3. auto_approve_permissions=False -> should NOT have policy
+        recorded.clear()
+        backend_no_approve = AntigravitySdkBackend(
+            app_data_dir=str(tmp_path / "app-data"),
+            auto_approve_permissions=False,
+            sdk_module=fake_sdk,
+        )
+        backend_no_approve.run_turn("hello", tmp_path, read_only=False)
+        assert not hasattr(recorded["config"], "policies")
+
 
 class TestBackendFactory:
     def test_selects_backend_from_environment(self) -> None:
@@ -479,9 +534,15 @@ class TestBackendFactory:
         assert isinstance(default_backend, AgyCliBackend)
 
         sdk_backend = create_agent_backend(
-            {"AGENT_BACKEND": "sdk", "ANTIGRAVITY_VERTEX": "true", "GEMINI_API_KEY": "k1"}
+            {
+                "AGENT_BACKEND": "sdk",
+                "ANTIGRAVITY_VERTEX": "true",
+                "GEMINI_API_KEY": "k1",
+                "AGY_AUTO_APPROVE": "true",
+            }
         )
         assert isinstance(sdk_backend, AntigravitySdkBackend)
+        assert sdk_backend._auto_approve_permissions is True
 
         with pytest.raises(ValueError, match="Unsupported AGENT_BACKEND"):
             create_agent_backend({"AGENT_BACKEND": "unknown"})
