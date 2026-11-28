@@ -1,0 +1,164 @@
+name: Deploy
+
+# Deploys worker images, the ingest Lambda zip, and Terraform (infra/) to AWS via GitHub OIDC.
+# Runs after CI succeeds on main. Manual runs can deploy/roll back any commit SHA.
+# AWS role + config come from repo variables (see infra-bootstrap-iam/README.md):
+#   AWS_DEPLOY_ROLE_ARN, AWS_REGION, TF_STATE_BUCKET, TFVARS (contents of infra/terraform.tfvars),
+#   optional: IMAGE_PLATFORM, ANTIGRAVITY_SDK_PACKAGE, AGY_BINARY_URL
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Commit SHA to deploy (rollback: a previously deployed SHA). Defaults to the branch head."
+        required: false
+        type: string
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  changes:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      any: ${{ steps.filter.outputs.any }}
+      images: ${{ steps.filter.outputs.images }}
+    env:
+      DEPLOY_SHA: ${{ inputs.sha || github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+          fetch-depth: 2
+
+      # Squash/rebase merges produce one commit on main, so diffing against its parent is enough.
+      # Manual runs (incl. rollbacks) always deploy everything.
+      - name: Detect deploy-relevant changes
+        id: filter
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "any=true" >> "$GITHUB_OUTPUT"; echo "images=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          changed="$(git diff --name-only "${DEPLOY_SHA}^" "${DEPLOY_SHA}" || git ls-files)"
+          echo "${changed}"
+          match() { grep -qE "$1" <<<"${changed}" && echo true || echo false; }
+          images="$(match '^(src/(shared|worker|reviewer)/|prompts/|docker/|scripts/build_and_push_workers\.sh|pyproject\.toml|uv\.lock)')"
+          other="$(match '^(infra/|src/ingest/|src/shared/|scripts/deployed_image_uris\.sh|\.github/workflows/deploy\.yml)')"
+          any=false
+          if [ "${images}" = true ] || [ "${other}" = true ]; then any=true; fi
+          echo "images=${images}" >> "$GITHUB_OUTPUT"
+          echo "any=${any}" >> "$GITHUB_OUTPUT"
+          echo "images=${images} any=${any}"
+
+  deploy:
+    needs: changes
+    if: needs.changes.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 60
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      PROJECT_PREFIX: agentic-workflow-prod
+      DEPLOY_SHA: ${{ inputs.sha || github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~> 1.10"
+          terraform_wrapper: false
+
+      - name: Build and push worker images
+        if: needs.changes.outputs.images == 'true'
+        env:
+          IMAGE_TAG: ${{ env.DEPLOY_SHA }}
+        run: |
+          args=(--push --tag "${DEPLOY_SHA}")
+          [ -n "${{ vars.IMAGE_PLATFORM }}" ] && args+=(--platform "${{ vars.IMAGE_PLATFORM }}")
+          [ -n "${{ vars.ANTIGRAVITY_SDK_PACKAGE }}" ] && args+=(--sdk-package "${{ vars.ANTIGRAVITY_SDK_PACKAGE }}")
+          [ -n "${{ vars.AGY_BINARY_URL }}" ] && args+=(--agy-binary-url "${{ vars.AGY_BINARY_URL }}")
+          ./scripts/build_and_push_workers.sh "${args[@]}"
+
+      - name: Resolve immutable image digests
+        id: digests
+        env:
+          IMAGES_CHANGED: ${{ needs.changes.outputs.images }}
+        run: |
+          if [ "${IMAGES_CHANGED}" != "true" ]; then
+            # Images unchanged: keep whatever is currently deployed.
+            uris="$(./scripts/deployed_image_uris.sh)"
+            echo "uris=${uris}" >> "$GITHUB_OUTPUT"
+            echo "Reusing deployed image URIs: ${uris}"
+            exit 0
+          fi
+          registry="$(aws sts get-caller-identity --query Account --output text).dkr.ecr.${AWS_REGION}.amazonaws.com"
+          uris='{}'
+          for runtime in base python node infra; do
+            repo="${PROJECT_PREFIX}-worker-${runtime}"
+            digest="$(aws ecr describe-images --repository-name "${repo}" \
+              --image-ids imageTag="${DEPLOY_SHA}" --query 'imageDetails[0].imageDigest' --output text)"
+            uris="$(jq -c --arg k "${runtime}" --arg v "${registry}/${repo}@${digest}" '. + {($k): $v}' <<<"${uris}")"
+          done
+          echo "uris=${uris}" >> "$GITHUB_OUTPUT"
+          echo "Pinned image URIs: ${uris}"
+
+      - name: Build ingest Lambda zip
+        run: ./infra/scripts/build-ingest-lambda.sh
+
+      - name: Terraform init
+        working-directory: infra
+        env:
+          TFVARS: ${{ vars.TFVARS }}
+        run: |
+          printf 'bucket = "%s"\nregion = "%s"\n' "${{ vars.TF_STATE_BUCKET }}" "${AWS_REGION}" > backend.hcl
+          printf '%s\n' "${TFVARS}" > terraform.tfvars
+          terraform init -input=false -backend-config=backend.hcl
+
+      - name: Terraform plan
+        working-directory: infra
+        env:
+          TF_VAR_lambda_worker_image_uris: ${{ steps.digests.outputs.uris }}
+        run: terraform plan -input=false -out=tfplan
+
+      - name: Terraform apply
+        working-directory: infra
+        run: terraform apply -input=false tfplan
+
+      - name: Smoke check Lambda image digests
+        working-directory: infra
+        env:
+          URIS: ${{ steps.digests.outputs.uris }}
+        run: |
+          fail=0
+          for runtime in $(terraform output -json worker_lambda_arns | jq -r 'keys[]'); do
+            arn="$(terraform output -json worker_lambda_arns | jq -r --arg k "${runtime}" '.[$k]')"
+            want="$(jq -r --arg k "${runtime}" '.[$k]' <<<"${URIS}")"
+            got="$(aws lambda get-function --function-name "${arn}" --query 'Code.ImageUri' --output text)"
+            echo "${runtime}: want=${want} got=${got}"
+            [ "${want}" = "${got}" ] || fail=1
+          done
+          exit "${fail}"

@@ -1,0 +1,103 @@
+name: Terraform Plan
+
+# Posts `terraform plan` for infra/ on pull requests so reviewers (human and review agent) can see
+# what would change. Uses the READ-ONLY plan role (AWS_PLAN_ROLE_ARN), never the deploy role.
+# Fork PRs get no OIDC token and are skipped.
+
+on:
+  pull_request:
+    paths:
+      - "infra/**"
+      - "src/ingest/**"
+      - "src/shared/**"
+      - "scripts/deployed_image_uris.sh"
+      - ".github/workflows/plan.yml"
+
+concurrency:
+  group: plan-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  plan:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      PROJECT_PREFIX: agentic-workflow-prod
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC, read-only)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~> 1.10"
+          terraform_wrapper: false
+
+      - name: Build ingest Lambda zip
+        run: ./infra/scripts/build-ingest-lambda.sh
+
+      - name: Terraform init
+        working-directory: infra
+        env:
+          TFVARS: ${{ vars.TFVARS }}
+        run: |
+          printf 'bucket = "%s"\nregion = "%s"\n' "${{ vars.TF_STATE_BUCKET }}" "${AWS_REGION}" > backend.hcl
+          printf '%s\n' "${TFVARS}" > terraform.tfvars
+          terraform init -input=false -backend-config=backend.hcl
+
+      - name: Terraform plan
+        id: plan
+        working-directory: infra
+        run: |
+          export TF_VAR_lambda_worker_image_uris="$(../scripts/deployed_image_uris.sh)"
+          set +e
+          terraform plan -input=false -lock=false -no-color -detailed-exitcode -out=tfplan 2>&1 | tee plan.log
+          code=${PIPESTATUS[0]}
+          set -e
+          if [ "${code}" -ne 1 ]; then
+            terraform show -no-color tfplan > plan.txt
+          else
+            cp plan.log plan.txt
+          fi
+          echo "exitcode=${code}" >> "$GITHUB_OUTPUT"
+          [ "${code}" -ne 1 ] || exit 1
+
+      - name: Comment plan on PR
+        if: always() && steps.plan.outcome != 'skipped'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXITCODE: ${{ steps.plan.outputs.exitcode }}
+        run: |
+          case "${EXITCODE}" in
+            0) status="No infrastructure changes." ;;
+            2) status="Infrastructure changes detected." ;;
+            *) status="Plan failed." ;;
+          esac
+          {
+            echo "<!-- terraform-plan -->"
+            echo "### Terraform plan: ${status}"
+            echo "Commit: ${{ github.event.pull_request.head.sha }} (read-only; image digests held at currently deployed values)"
+            echo '<details><summary>Show plan</summary>'
+            echo
+            echo '```'
+            tail -c 60000 infra/plan.txt || true
+            echo '```'
+            echo '</details>'
+          } > comment.md
+          gh pr comment "${{ github.event.pull_request.number }}" --edit-last --create-if-none --body-file comment.md
