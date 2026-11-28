@@ -1,11 +1,11 @@
 # Copy to terraform.tfvars (gitignored).
 github_subjects = [
-  "repo:waustinlynn/agentic-workflow:ref:refs/heads/main",
-  "repo:waustinlynn/agentic-workflow:environment:production",
-  "repo:waustinlynn/monitor-grow:ref:refs/heads/main",
+  "repo:waustinlynn@6461055/agentic-workflow@1472319970:ref:refs/heads/main",
+  "repo:waustinlynn@6461055/agentic-workflow@1472319970:environment:production",
+  "repo:waustinlynn@6461055/monitor-grow@1474744311:ref:refs/heads/main",
 ]
 
 # Read-only plan role for pull_request workflows (terraform plan on PRs).
 github_plan_subjects = [
-  "repo:waustinlynn/agentic-workflow:pull_request",
+  "repo:waustinlynn@6461055/agentic-workflow@1472319970:pull_request",
 ]

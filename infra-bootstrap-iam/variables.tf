@@ -19,7 +19,7 @@ variable "role_name" {
 variable "github_subjects" {
   description = <<-EOT
     GitHub OIDC `sub` claim patterns allowed to assume the deploy role. Add one entry per repo/ref/environment, e.g.
-    "repo:waustinlynn/agentic-workflow:ref:refs/heads/main",
+    "repo:waustinlynn@<owner-id>/agentic-workflow@<repo-id>:ref:refs/heads/main",
     "repo:waustinlynn/agentic-workflow:environment:production",
     "repo:waustinlynn/agentic-workflow:pull_request" (plan-only; see README),
     "repo:waustinlynn/monitor-grow:ref:refs/heads/main".
@@ -27,8 +27,8 @@ variable "github_subjects" {
   type        = list(string)
 
   validation {
-    condition     = length(var.github_subjects) > 0 && alltrue([for s in var.github_subjects : startswith(s, "repo:waustinlynn/")])
-    error_message = "github_subjects must be non-empty and every entry must start with \"repo:waustinlynn/\"."
+    condition     = length(var.github_subjects) > 0 && alltrue([for s in var.github_subjects : can(regex("^repo:waustinlynn(@[0-9]+)?/", s))])
+    error_message = "github_subjects must be non-empty and every entry must start with \"repo:waustinlynn/\" or \"repo:waustinlynn@<owner-id>/\"."
   }
 }
 
@@ -76,7 +76,7 @@ variable "github_plan_subjects" {
   default     = []
 
   validation {
-    condition     = alltrue([for s in var.github_plan_subjects : startswith(s, "repo:waustinlynn/")])
-    error_message = "Every github_plan_subjects entry must start with \"repo:waustinlynn/\"."
+    condition     = alltrue([for s in var.github_plan_subjects : can(regex("^repo:waustinlynn(@[0-9]+)?/", s))])
+    error_message = "Every github_plan_subjects entry must start with \"repo:waustinlynn/\" or \"repo:waustinlynn@<owner-id>/\"."
   }
 }

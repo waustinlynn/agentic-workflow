@@ -19,15 +19,20 @@ State lives in its own bucket: `agentic-iam-deploy-tfstate-367553824651-us-east-
    ```bash
    ./infra-bootstrap-iam/scripts/bootstrap-state.sh
    ```
-3. **Configure trusted repos.** Copy and edit the tfvars (gitignored):
+3. **Find each repo's OIDC subject prefix.** These repos use *immutable* subject claims, so subjects look like `repo:OWNER@OWNER_ID/REPO@REPO_ID:...` instead of `repo:OWNER/REPO:...`:
+   ```bash
+   gh api repos/OWNER/REPO/actions/oidc/customization/sub   # -> sub_claim_prefix
+   ```
+   Use that `sub_claim_prefix` in every `github_subjects` / `github_plan_subjects` entry (a mismatch shows up as `Not authorized to perform sts:AssumeRoleWithWebIdentity`).
+3b. **Configure trusted repos.** Copy and edit the tfvars (gitignored):
    ```bash
    cd infra-bootstrap-iam
    cp terraform.tfvars.example terraform.tfvars
    ```
    `github_subjects` lists OIDC `sub` patterns allowed to assume the role. Prefer narrow subjects:
-   - `repo:OWNER/REPO:ref:refs/heads/main` — workflows on `main`
-   - `repo:OWNER/REPO:environment:production` — jobs using the `production` GitHub Environment (use for `terraform apply`)
-   - `repo:OWNER/REPO:pull_request` — PR runs (only add if PRs need AWS for `terraform plan`; consider a separate read-only role first, since this grants the deploy role to PR code)
+   - `<sub_claim_prefix>:ref:refs/heads/main` — workflows on `main`
+   - `<sub_claim_prefix>:environment:production` — jobs using the `production` GitHub Environment (use for `terraform apply`)
+   - `<sub_claim_prefix>:pull_request` — PR runs (only add if PRs need AWS for `terraform plan`; consider a separate read-only role first, since this grants the deploy role to PR code)
 
    If your account already has a GitHub OIDC provider, set `create_oidc_provider = false` (only one per account is allowed).
 4. **Apply:**
