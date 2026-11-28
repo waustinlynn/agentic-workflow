@@ -267,7 +267,6 @@ def _handle_code_and_test(
             prompt,
             ws.repo_dir,
             schema=ctx.prompt_assembler.get_schema_path(TaskType.CODE_AND_TEST),
-            conversation_id=state.conversation_id,
             timeout=ctx.step_timeout(
                 cfg.execution.timeout_minutes, step_name="code_and_test agent turn"
             ),
@@ -431,7 +430,6 @@ def _handle_address_review(
             prompt,
             ws.repo_dir,
             schema=ctx.prompt_assembler.get_schema_path(TaskType.ADDRESS_REVIEW),
-            conversation_id=state.conversation_id,
             timeout=ctx.step_timeout(
                 cfg.execution.timeout_minutes, step_name="address_review agent turn"
             ),
@@ -558,7 +556,6 @@ def _handle_fix_ci(
             prompt,
             ws.repo_dir,
             schema=ctx.prompt_assembler.get_schema_path(TaskType.FIX_CI),
-            conversation_id=state.conversation_id,
             timeout=ctx.step_timeout(cfg.execution.timeout_minutes, step_name="fix_ci agent turn"),
             read_only=False,
         )
@@ -686,7 +683,6 @@ def _handle_triage(
             prompt,
             ws.repo_dir,
             schema=ctx.prompt_assembler.get_schema_path(TaskType.TRIAGE),
-            conversation_id=state.conversation_id,
             timeout=ctx.step_timeout(cfg.execution.timeout_minutes, step_name="triage agent turn"),
             read_only=True,
         )
@@ -800,7 +796,6 @@ def _handle_plan(
             prompt,
             ws.repo_dir,
             schema=ctx.prompt_assembler.get_schema_path(TaskType.PLAN),
-            conversation_id=state.conversation_id,
             timeout=ctx.step_timeout(cfg.execution.timeout_minutes, step_name="plan agent turn"),
             read_only=True,
         )

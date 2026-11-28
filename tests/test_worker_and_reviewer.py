@@ -675,3 +675,65 @@ class TestWorkerAndReviewerLifecycle:
         saved = store.get("waustinlynn/demo", 40)
         assert saved is not None
         assert saved.status is expected_run_status
+
+    def test_tasks_start_fresh_agent_session_without_resuming_prior_conversation(
+        self,
+        tmp_path: Path,
+        app_keys: dict[AppIdentity, GitHubAppCredentials],
+    ) -> None:
+        bare = _create_bare_repo(tmp_path)
+        server = _MockGitHubServer()
+        store = InMemoryRunStateStore()
+        store.put(
+            RunState(
+                repo_full_name="waustinlynn/demo",
+                issue_or_pr_number=10,
+                status=RunStatus.QUEUED,
+                conversation_id="conv-from-prior-triage",
+            )
+        )
+
+        def agent_cb(_prompt: str, ws_dir: Path, _read_only: bool) -> AgentTurnResult:
+            (ws_dir / "app.py").write_text("VALUE = 2\n", encoding="utf-8")
+            return AgentTurnResult(
+                text="done",
+                conversation_id="conv-fresh-coder",
+                structured_output={
+                    "summary": "Updated VALUE",
+                    "files_changed": ["app.py"],
+                    "tests_added_or_updated": [],
+                    "verify_results": [],
+                    "commit_message": "feat: update VALUE",
+                    "pr_title": "feat: update VALUE",
+                    "pr_body": "Closes #10",
+                    "blocked_reason": None,
+                },
+            )
+
+        backend = _ScriptedBackend(agent_cb)
+        ctx = WorkerContext(
+            github_clients=_build_clients(app_keys, server),
+            agent_backend=backend,
+            prompt_assembler=PromptAssembler(),
+            workspace_manager=WorkspaceManager(base_dir=tmp_path / "ws"),
+            state_store=store,
+            clone_url_override=str(bare),
+        )
+
+        outcome = handle_task(
+            TaskEnvelope(
+                task_type=TaskType.CODE_AND_TEST,
+                repo_full_name="waustinlynn/demo",
+                issue_or_pr_number=10,
+                delivery_id="d-fresh-session",
+                actor="waustinlynn",
+            ),
+            ctx,
+        )
+
+        assert outcome.status == "completed"
+        assert len(backend.calls) == 1
+        assert backend.calls[0]["conversation_id"] is None
+        saved = store.get("waustinlynn/demo", 10)
+        assert saved is not None
+        assert saved.conversation_id == "conv-fresh-coder"
