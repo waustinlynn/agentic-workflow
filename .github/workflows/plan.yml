@@ -67,10 +67,14 @@ jobs:
         run: |
           export TF_VAR_lambda_worker_image_uris="$(../scripts/deployed_image_uris.sh)"
           set +e
-          terraform plan -input=false -lock=false -no-color -detailed-exitcode > plan.txt 2>&1
-          code=$?
+          terraform plan -input=false -lock=false -no-color -detailed-exitcode -out=tfplan 2>&1 | tee plan.log
+          code=${PIPESTATUS[0]}
           set -e
-          cat plan.txt
+          if [ "${code}" -ne 1 ]; then
+            terraform show -no-color tfplan > plan.txt
+          else
+            cp plan.log plan.txt
+          fi
           echo "exitcode=${code}" >> "$GITHUB_OUTPUT"
           [ "${code}" -ne 1 ] || exit 1
 
