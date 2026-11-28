@@ -76,6 +76,8 @@ Append its subjects to `github_subjects`, add its name prefix to `resource_name_
 ## Security notes
 
 - IAM role/policy management is limited to resources whose names start with `resource_name_prefixes`, and all service permissions are scoped to those prefixes. Review before widening: a role that can create IAM roles can escalate privileges.
+- Managed-policy attachment (roles and users) is restricted by an `iam:PolicyARN` condition to name-prefixed customer-managed policies; AWS managed policies such as `AdministratorAccess` cannot be attached.
+- **Residual risk:** inline role policies (`iam:PutRolePolicy`, used by `infra/`) cannot be content-restricted by IAM conditions, so the deploy role could still write a broad inline policy on a prefixed role it manages. A follow-up is to require a permissions boundary on prefixed roles (needs a small `infra/` change). Treat merge access to `main` and the `production` environment as the control.
 - The trust policy requires `aud = sts.amazonaws.com` and a matching `sub`. Never use `repo:OWNER/*`.
 - This root is applied by a human with admin credentials; the deploy role cannot modify itself (not matched by the prefixes, as long as `role_name` doesn't start with one).
 

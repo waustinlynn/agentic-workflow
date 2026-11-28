@@ -10,8 +10,8 @@ locals {
     : "arn:aws:iam::${local.account_id}:oidc-provider/token.actions.githubusercontent.com"
   )
 
-  name_patterns = flatten([for p in var.resource_name_prefixes : ["${p}-*", "${p}*"]])
   role_arns     = [for p in var.resource_name_prefixes : "arn:aws:iam::${local.account_id}:role/${p}*"]
+  user_arns     = [for p in var.resource_name_prefixes : "arn:aws:iam::${local.account_id}:user/${p}*"]
   policy_arns   = [for p in var.resource_name_prefixes : "arn:aws:iam::${local.account_id}:policy/${p}*"]
   lambda_arns   = [for p in var.resource_name_prefixes : "arn:aws:lambda:${local.region}:${local.account_id}:function:${p}*"]
   sqs_arns      = [for p in var.resource_name_prefixes : "arn:aws:sqs:${local.region}:${local.account_id}:${p}*"]
@@ -96,9 +96,16 @@ data "aws_iam_policy_document" "deploy" {
     actions = [
       "lambda:CreateEventSourceMapping", "lambda:UpdateEventSourceMapping", "lambda:DeleteEventSourceMapping",
       "lambda:GetEventSourceMapping", "lambda:ListEventSourceMappings",
-      "lambda:ListTags", "lambda:TagResource", "lambda:UntagResource",
+      "lambda:ListTags",
     ]
     resources = ["*"]
+  }
+
+  # Tagging of event source mappings (ARN is mapping-UUID based, so scope to the mapping resource type only).
+  statement {
+    sid       = "LambdaEventSourceMappingTags"
+    actions   = ["lambda:TagResource", "lambda:UntagResource"]
+    resources = ["arn:aws:lambda:${local.region}:${local.account_id}:event-source-mapping:*"]
   }
 
   statement {
@@ -144,7 +151,6 @@ data "aws_iam_policy_document" "deploy" {
       "iam:CreateRole", "iam:DeleteRole", "iam:GetRole", "iam:UpdateRole", "iam:UpdateAssumeRolePolicy",
       "iam:TagRole", "iam:UntagRole", "iam:ListRolePolicies", "iam:ListAttachedRolePolicies", "iam:ListInstanceProfilesForRole",
       "iam:PutRolePolicy", "iam:GetRolePolicy", "iam:DeleteRolePolicy",
-      "iam:AttachRolePolicy", "iam:DetachRolePolicy",
       "iam:CreatePolicy", "iam:DeletePolicy", "iam:GetPolicy", "iam:GetPolicyVersion", "iam:ListPolicyVersions",
       "iam:CreatePolicyVersion", "iam:DeletePolicyVersion", "iam:TagPolicy", "iam:UntagPolicy",
       "iam:PassRole",
@@ -152,10 +158,28 @@ data "aws_iam_policy_document" "deploy" {
     resources = concat(local.role_arns, local.policy_arns)
   }
 
+  # Attaching managed policies is limited to name-prefixed customer-managed policies, so the role
+  # cannot attach AdministratorAccess (or any AWS managed policy) to itself or to roles it manages.
   statement {
-    sid       = "IamLocalRunnerUser"
-    actions   = ["iam:*User*", "iam:*UserPolicy*"]
-    resources = [for p in var.resource_name_prefixes : "arn:aws:iam::${local.account_id}:user/${p}*"]
+    sid       = "IamAttachPrefixedPoliciesOnly"
+    actions   = ["iam:AttachRolePolicy", "iam:DetachRolePolicy", "iam:AttachUserPolicy", "iam:DetachUserPolicy"]
+    resources = concat(local.role_arns, local.user_arns)
+
+    condition {
+      test     = "ArnLike"
+      variable = "iam:PolicyARN"
+      values   = local.policy_arns
+    }
+  }
+
+  statement {
+    sid = "IamLocalRunnerUser"
+    actions = [
+      "iam:CreateUser", "iam:DeleteUser", "iam:GetUser", "iam:TagUser", "iam:UntagUser", "iam:UpdateUser",
+      "iam:ListAttachedUserPolicies", "iam:ListUserPolicies", "iam:ListGroupsForUser",
+      "iam:CreateAccessKey", "iam:DeleteAccessKey", "iam:ListAccessKeys",
+    ]
+    resources = local.user_arns
   }
 
   statement {
