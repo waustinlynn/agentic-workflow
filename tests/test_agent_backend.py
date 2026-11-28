@@ -184,6 +184,55 @@ class TestAgyCliBackend:
         with pytest.raises(AgentTimeoutError, match="timed out"):
             backend.run_turn("hello", tmp_path, timeout=5.0)
 
+    def test_retries_fresh_session_when_resume_conversation_not_found(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        seen_cmds: list[list[str]] = []
+
+        def fake_runner(
+            cmd: list[str],
+            _cwd: Path,
+            _env: Mapping[str, str],
+            _timeout: float,
+        ) -> SubprocessOutcome:
+            seen_cmds.append(list(cmd))
+            if "--resume" in cmd:
+                return SubprocessOutcome(
+                    returncode=1,
+                    stdout="",
+                    stderr='conversation "conv-stale" not found (cannot resume)',
+                )
+            return SubprocessOutcome(
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "event": "result",
+                        "result": {
+                            "conversation_id": "conv-fresh",
+                            "status": "SUCCESS",
+                            "response": '{"ok": true}',
+                            "structured_output": {"ok": True},
+                        },
+                    }
+                ),
+                stderr="",
+            )
+
+        backend = AgyCliBackend(subprocess_runner=fake_runner)
+        result = backend.run_turn(
+            "Implement fix",
+            tmp_path,
+            schema={"type": "object"},
+            conversation_id="conv-stale",
+        )
+
+        assert len(seen_cmds) == 2
+        assert "--resume" in seen_cmds[0] and "conv-stale" in seen_cmds[0]
+        assert "--resume" not in seen_cmds[1]
+        assert result.conversation_id == "conv-fresh"
+        assert result.structured_output == {"ok": True}
+
 
 @dataclass
 class ToolCall:
@@ -331,6 +380,97 @@ class TestAntigravitySdkBackend:
         with pytest.raises(AgentTimeoutError, match="timed out"):
             backend.run_turn("hello", tmp_path, timeout=0.05)
         assert slow_response.cancelled is True
+
+    def test_retries_fresh_session_when_conversation_cannot_be_resumed(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        configs_seen: list[dict[str, Any]] = []
+
+        class _ResumableAgent:
+            def __init__(self, config: dict[str, Any]) -> None:
+                self._config = config
+                self.conversation_id = "sdk-fresh-99"
+
+            async def __aenter__(self) -> _ResumableAgent:
+                if "conversation_id" in self._config:
+                    cid = self._config["conversation_id"]
+                    raise RuntimeError(
+                        f"Failed to initialize conversation at ws://localhost:35155/. "
+                        f'Stderr: Failed to create agent: conversation "{cid}" not found '
+                        f'in "/tmp/antigravity_up7nsc1n" (cannot resume)'
+                    )
+                return self
+
+            async def __aexit__(self, *_exc: Any) -> None:
+                return None
+
+            async def chat(self, _prompt: str) -> _FakeChatResponse:
+                return _FakeChatResponse(
+                    text_val='{"ok": true}',
+                    structured={"ok": True},
+                )
+
+        def _make_config(**kwargs: Any) -> dict[str, Any]:
+            configs_seen.append(dict(kwargs))
+            return kwargs
+
+        fake_sdk = SimpleNamespace(
+            Agent=_ResumableAgent,
+            LocalAgentConfig=_make_config,
+        )
+        backend = AntigravitySdkBackend(
+            app_data_dir=str(tmp_path / "app-data"),
+            sdk_module=fake_sdk,
+        )
+
+        result = backend.run_turn(
+            "Implement issue #34",
+            tmp_path,
+            schema={"type": "object"},
+            conversation_id="b4bce9a4c4df56783c7e57363aec7f40",
+        )
+
+        assert len(configs_seen) == 2
+        assert configs_seen[0]["conversation_id"] == "b4bce9a4c4df56783c7e57363aec7f40"
+        assert "conversation_id" not in configs_seen[1]
+        assert result.conversation_id == "sdk-fresh-99"
+        assert result.structured_output == {"ok": True}
+
+    def test_does_not_retry_unrelated_session_init_errors(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        attempts = 0
+
+        class _BrokenAgent:
+            def __init__(self, _config: Any) -> None:
+                pass
+
+            async def __aenter__(self) -> _BrokenAgent:
+                nonlocal attempts
+                attempts += 1
+                raise RuntimeError("Authentication failed: invalid API key")
+
+            async def __aexit__(self, *_exc: Any) -> None:
+                return None
+
+        fake_sdk = SimpleNamespace(
+            Agent=_BrokenAgent,
+            LocalAgentConfig=lambda **kw: kw,
+        )
+        backend = AntigravitySdkBackend(
+            app_data_dir=str(tmp_path / "app-data"),
+            sdk_module=fake_sdk,
+        )
+
+        with pytest.raises(RuntimeError, match="invalid API key"):
+            backend.run_turn(
+                "Implement issue #34",
+                tmp_path,
+                conversation_id="b4bce9a4c4df56783c7e57363aec7f40",
+            )
+        assert attempts == 1
 
 
 class TestBackendFactory:

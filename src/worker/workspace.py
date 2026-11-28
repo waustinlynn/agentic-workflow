@@ -34,13 +34,32 @@ class ProtectedPathViolationError(WorkspaceError):
         super().__init__(f"Refusing to commit/push changes touching protected path(s): {joined}")
 
 
+_COMMAND_ERROR_OUTPUT_TAIL_CHARS = 1500
+
+
+def _tail_excerpt(text: str, *, max_chars: int = _COMMAND_ERROR_OUTPUT_TAIL_CHARS) -> str:
+    stripped = text.strip()
+    if not stripped:
+        return ""
+    if len(stripped) <= max_chars:
+        return stripped
+    return f"...(truncated)\n{stripped[-max_chars:]}"
+
+
 class CommandExecutionError(WorkspaceError):
     """Raised when a repo setup or verification command fails or times out."""
 
     def __init__(self, result: CommandResult) -> None:
         self.result = result
         reason = "timed out" if result.timed_out else f"exited with status {result.returncode}"
-        super().__init__(f"Command {result.command!r} {reason}")
+        parts = [f"Command {result.command!r} {reason}"]
+        stderr_excerpt = _tail_excerpt(result.stderr)
+        stdout_excerpt = _tail_excerpt(result.stdout)
+        if stderr_excerpt:
+            parts.append(f"stderr:\n{stderr_excerpt}")
+        if stdout_excerpt:
+            parts.append(f"stdout:\n{stdout_excerpt}")
+        super().__init__("\n\n".join(parts))
 
 
 @dataclass(frozen=True, slots=True)

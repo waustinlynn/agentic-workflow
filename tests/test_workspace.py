@@ -153,3 +153,51 @@ class TestWorkspaceManager:
             ws.run_verify_commands(timeout_per_command=0.1)
 
         assert exc_info.value.result.timed_out is True
+
+    def test_command_failure_includes_stdout_and_stderr_in_error_message(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        bare = _create_bare_origin(
+            tmp_path,
+            config_yaml="execution:\n  verify_commands:\n    - 'python3 fail_check.py'\n",
+        )
+        manager = WorkspaceManager(base_dir=tmp_path / "workspaces")
+
+        with manager.checkout("waustinlynn/demo", issue_number=11, clone_url=str(bare)) as ws:
+            (ws.repo_dir / "fail_check.py").write_text(
+                'import sys\nprint("OUT_LINE")\nprint("ERR_LINE", file=sys.stderr)\nsys.exit(1)\n',
+                encoding="utf-8",
+            )
+            with pytest.raises(CommandExecutionError) as exc_info:
+                ws.run_verify_commands()
+
+        message = str(exc_info.value)
+        assert "exited with status 1" in message
+        assert "ERR_LINE" in message
+        assert "OUT_LINE" in message
+
+    def test_command_failure_truncates_large_output_keeping_tail(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        bare = _create_bare_origin(
+            tmp_path,
+            config_yaml="execution:\n  verify_commands:\n    - 'python3 fail_big.py'\n",
+        )
+        manager = WorkspaceManager(base_dir=tmp_path / "workspaces")
+
+        with manager.checkout("waustinlynn/demo", issue_number=12, clone_url=str(bare)) as ws:
+            (ws.repo_dir / "fail_big.py").write_text(
+                'import sys\nprint("HEAD_MARKER" + "x" * 4000 + "TAIL_MARKER", file=sys.stderr)\n'
+                "sys.exit(2)\n",
+                encoding="utf-8",
+            )
+            with pytest.raises(CommandExecutionError) as exc_info:
+                ws.run_verify_commands()
+
+        message = str(exc_info.value)
+        assert "exited with status 2" in message
+        assert "TAIL_MARKER" in message
+        assert "HEAD_MARKER" not in message
+        assert "truncated" in message

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
+import logging
 import os
 import subprocess
 import tempfile
@@ -14,6 +15,14 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
+
+logger = logging.getLogger(__name__)
+
+
+def _is_missing_conversation_error(message: str) -> bool:
+    """Return True when Antigravity reports a saved conversation ID cannot be resumed."""
+    lowered = message.lower()
+    return "cannot resume" in lowered or ("conversation" in lowered and "not found" in lowered)
 
 
 class AgentBackendError(RuntimeError):
@@ -255,22 +264,39 @@ class AgyCliBackend(AgentBackend):
                 temp_schema_file = Path(tmp.name)
                 schema_arg = str(temp_schema_file)
 
+        active_conversation_id = conversation_id
         try:
-            cmd = self._build_command(
-                prompt=prompt,
-                schema_arg=schema_arg,
-                conversation_id=conversation_id,
-                timeout=timeout,
-                read_only=read_only,
-            )
             env = dict(os.environ)
             env.update(self._extra_env)
             if self._api_key:
                 env["ANTIGRAVITY_API_KEY"] = self._api_key
 
+            def _invoke(resume_cid: str | None) -> SubprocessOutcome:
+                cmd = self._build_command(
+                    prompt=prompt,
+                    schema_arg=schema_arg,
+                    conversation_id=resume_cid,
+                    timeout=timeout,
+                    read_only=read_only,
+                )
+                # Give outer subprocess extra headroom over --print-timeout so agy exits cleanly.
+                return self._runner(cmd, workspace_dir, env, timeout + 15.0)
+
             started = time.monotonic()
-            # Give outer subprocess extra headroom over --print-timeout so agy exits cleanly.
-            outcome = self._runner(cmd, workspace_dir, env, timeout + 15.0)
+            outcome = _invoke(active_conversation_id)
+            if (
+                outcome.returncode != 0
+                and active_conversation_id
+                and _is_missing_conversation_error(outcome.stderr)
+            ):
+                logger.warning(
+                    "Conversation %s could not be resumed in agy CLI (%s); "
+                    "retrying with a fresh session",
+                    active_conversation_id,
+                    outcome.stderr.strip()[:200],
+                )
+                active_conversation_id = None
+                outcome = _invoke(None)
             elapsed = time.monotonic() - started
         finally:
             if temp_schema_file is not None and temp_schema_file.exists():
@@ -298,7 +324,7 @@ class AgyCliBackend(AgentBackend):
         return AgentTurnResult(
             text=parsed.text,
             structured_output=parsed.structured_output,
-            conversation_id=parsed.conversation_id or conversation_id,
+            conversation_id=parsed.conversation_id or active_conversation_id,
             tool_calls=tuple(parsed.tool_calls),
             duration_seconds=elapsed,
             raw_events=tuple(parsed.raw_events),
@@ -409,7 +435,7 @@ class AntigravitySdkBackend(AgentBackend):
         sdk = self._load_sdk()
         started = time.monotonic()
 
-        async def _execute() -> AgentTurnResult:
+        async def _run_once(resume_conversation_id: str | None) -> AgentTurnResult:
             Path(self._app_data_dir).mkdir(parents=True, exist_ok=True)
             local_cfg_kwargs: dict[str, Any] = {
                 "workspaces": [str(workspace_dir)],
@@ -421,8 +447,8 @@ class AntigravitySdkBackend(AgentBackend):
                 local_cfg_kwargs["api_key"] = self._api_key
             if self._model:
                 local_cfg_kwargs["model"] = self._model
-            if conversation_id:
-                local_cfg_kwargs["conversation_id"] = conversation_id
+            if resume_conversation_id:
+                local_cfg_kwargs["conversation_id"] = resume_conversation_id
             if schema_dict is not None:
                 local_cfg_kwargs["response_schema"] = schema_dict
 
@@ -444,7 +470,7 @@ class AntigravitySdkBackend(AgentBackend):
 
                 text = str(await response.text())
                 raw_structured = await response.structured_output()
-                resp_cid = getattr(agent, "conversation_id", None) or conversation_id
+                resp_cid = getattr(agent, "conversation_id", None) or resume_conversation_id
 
             structured: dict[str, Any] | None = None
             if isinstance(raw_structured, dict):
@@ -479,6 +505,20 @@ class AntigravitySdkBackend(AgentBackend):
                 tool_calls=tuple(tool_names),
                 duration_seconds=time.monotonic() - started,
             )
+
+        async def _execute() -> AgentTurnResult:
+            try:
+                return await _run_once(conversation_id)
+            except Exception as exc:
+                if conversation_id and _is_missing_conversation_error(str(exc)):
+                    logger.warning(
+                        "Conversation %s could not be resumed in Antigravity SDK (%s); "
+                        "retrying with a fresh session",
+                        conversation_id,
+                        exc,
+                    )
+                    return await _run_once(None)
+                raise
 
         try:
             return asyncio.run(_execute())
